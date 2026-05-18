@@ -506,7 +506,7 @@ filter_spp <- function(target, conservation_type) {
     filter(!iucn_status %in% c("LC", "NT")) %>%
     ## Tag rows with the scenario info
     mutate(
-      target = target,
+      targets = target,
       conservation_type = conservation_type,
       n_species = n())
 }

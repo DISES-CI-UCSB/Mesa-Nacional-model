@@ -19,21 +19,14 @@ ipt_dir <- here("data/model_inputs")
 
 for (dir in c(temp_dir, ipt_dir)){
   if (!dir.exists(dir)) dir.create(dir)
-} 
+} ; rm(dir)
 
 ## Believe they have all be prepped in another step, but read in template just to be sure
 template <- rast(here("data/costs/human_footprint_2022.tif"))
 # mask <- as.numeric(template); mask[mask > -1] <- 1
 # outline <- as.polygons(mask); rm(mask)
 #-------------------------------- Features -------------------------------------
-##------------------------------ Ecosystems -----------------------------------
-## NOTE: need to generate matrix with each column as different ecosystem, like spp
-ecosys_r <- rast(here("data/features/ecosistemas.tif")) %>% 
-  resample(template, method = "near")
-ecosys_v <- as.matrix(ecosys_r)
-saveRDS(ecosys_v, file.path(ipt_dir, "ecosistemas.rds"))
-
-## Strategic Ecosystems
+##------------------------- Strategic Ecosystems -------------------------------
 ## Paramos 
 paramos_r <- rast(here("data/features/paramos.tif")) %>%
   ## match
@@ -67,6 +60,62 @@ humedales_v <- as.matrix(humedales_r)
 
 strat_ecos_v <- cbind(paramos_v, bosque_seco_v, manglares_v, humedales_v)
 saveRDS(strat_ecos_v, file.path(ipt_dir, "strategic_ecosystems.rds"))
+
+##------------------------------- Ecosystems -----------------------------------
+## First, convert shapefile to raster. 
+## Second, turn into gridded matrix matching other inputs.
+
+## Read in shapefile
+ecosys_sf <- read_sf(
+  dsn = here("data/features/Mapa_Ecosistemas_Continentales_Costeros_Marinos_100K_2024/SHAPE/e_eccmc_100K_2024.shp")) %>%
+  st_transform(crs(template)) 
+
+## Get "code list" of biomes
+## Could choose several different attributes, but for now using IAVH Biomes
+ecosys_df <- data.frame(
+  biome = unique(ecosys_sf$bioma_IAvH)) %>% 
+  mutate(biome_id = seq_len(nrow(.)))
+
+## Add biome codes to shapefile, then rasterize
+ecosys_r <- ecosys_sf %>% 
+  left_join(ecosys_df, join_by("bioma_IAvH" == "biome")) %>% 
+  vect() %>%  # make terra obj
+  rasterize(template, field = "biome_id") %>% 
+  mask(template) # remove coastal areas
+
+## Save the intermediate raster and biome code df
+writeRaster(ecosys_r, file.path(temp_dir, "ecosistemas_IAVH_2024.tif"))
+write_csv(ecosys_df, file.path(temp_dir, "ecosistemas_IDs_IAVH_2024.csv"))
+
+
+## Some ecosystems lost after masking, so only keep those with cells left
+valid_ids <- freq(ecosys_r)$value
+
+ecosys_df_valid <- ecosys_df %>% 
+  filter(biome_id %in% valid_ids)
+
+## Conver raster in to df of values
+vals <- as.data.frame(ecosys_r, cells = TRUE, na.rm = TRUE) %>% 
+  filter(biome_id %in% valid_ids) %>% 
+  ## sparseMatrix requires sequential numbers, so remap w/temporary variable
+  mutate(biome_id_j = match(biome_id, ecosys_df_valid$biome_id))
+
+## Create sparse matrix
+ecosys_mat <- sparseMatrix(
+  i = vals$cell,         # each row = raster cell
+  j = vals$biome_id_j,   # each column = ecosystem
+  x = 1,
+  dims = c(ncell(ecosys_r), nrow(ecosys_df_valid)),
+  dimnames = list(
+    NULL,
+    ecosys_df_valid$biome
+  )
+)
+
+## Save
+saveRDS(ecosys_mat, file.path(ipt_dir, "ecosistemas_IAVH_2024.rds"))
+
+
 
 ##------------------------------ BioModelos -----------------------------------
 ## Will generate one matrix that includes all potential spp
@@ -103,7 +152,7 @@ filter_spp <- function(target, conservation_type) {
     filter(!iucn_status %in% c("LC", "NT")) %>%
     ## Tag rows with the scenario info
     mutate(
-      target = target,
+      targets = target,
       conservation_type = conservation_type,
       n_species = n()
     )
@@ -125,7 +174,7 @@ write_csv(spp_filtered_df, file.path(ipt_dir, "biomod_spp_ranges_filtered.csv"))
 ## Next, create the sparse matrix for ALL potential spp
 ## So filter for lowest threshold, returning most spp
 spp_list <- spp_filtered_df %>% 
-  filter(target == 30,
+  filter(targets == 30,
          conservation_type == "RUNAP") %>% 
   select(scientific_name, class, file_name)
 
@@ -165,9 +214,6 @@ for (i in 1:nrow(spp_list)){
 
 ## Export
 saveRDS(vmat, file.path(ipt_dir, "biomod_filtered.rds"))
-
-
-
 
 
 #---------------------------- Costs & Constraints ------------------------------

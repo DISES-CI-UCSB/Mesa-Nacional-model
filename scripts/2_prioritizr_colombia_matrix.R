@@ -81,16 +81,14 @@ if (includes == "RUNAP") {
 
 ## -------- Ecosystems -----------------------------------------------------
 ## All ecosystems
-## NOTE: still need to fix this approach!!!!
-## Issueing with scaling, so just omit for now
-# ecosys_v <- readRDS(file.path(ipt_dir, "ecosistemas.rds"))
+ecosys_v <- readRDS(file.path(ipt_dir, "ecosistemas_IAVH_2024.rds"))
 
 ## Strategic ecosystems
 strat_ecos_v <- readRDS(file.path(ipt_dir, "strategic_ecosystems.rds"))
 
 
 ## Combine all
-# ecosystems <- cbind(ecosys_v, strat_ecos_v); rm(ecosys_v); rm(strat_ecos_v)
+ecosystems <- cbind(ecosys_v, strat_ecos_v); rm(ecosys_v); rm(strat_ecos_v)
 ecosystems <- strat_ecos_v; rm(strat_ecos_v)
 ecosystems <- ecosystems[ids,]      # Only keep PUs
 ecosystems[is.na(ecosystems)] <- 0  # Remove lingering NAs
@@ -101,6 +99,7 @@ ecosys_sparse <- as(ecosystems, "sparseMatrix"); rm(ecosystems)
 
 
 ## -------- Species -----------------------------------------------------
+## Read in large matrix
 mat <- readRDS(file.path(ipt_dir, "biomod_filtered.rds"))
 ## transpose (rows == spp, columns == cell)
 species_rij <- mat %>% t() %>% as("dgCMatrix"); rm(mat)
@@ -120,10 +119,6 @@ species_filtered <- species_rij[idx, ]; rm(species_rij)
 
 ## Combine all features into one mat
 features_mat <- rbind(ecosys_sparse, species_filtered)
-
-# ## try to fix scaling issue?
-# features_scalar <- max(features_mat)
-# features_mat <- features_mat / features_scalar
 
 n_features <- as.numeric(features_mat@Dim[1])
 feature_names <- features_mat@Dimnames[[1]]

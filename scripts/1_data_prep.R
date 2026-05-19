@@ -11,6 +11,7 @@ pacman::p_load(       # automatically installs packages if needed
   sf,                 # vector functions that play nicer w/tidyverse
   here,               # easier file paths
   svMisc,             # progress bar
+  purrr,              # faster lapply
   Matrix)             # Matrices
 
 ## Local directories
@@ -21,10 +22,10 @@ for (dir in c(temp_dir, ipt_dir)){
   if (!dir.exists(dir)) dir.create(dir)
 } ; rm(dir)
 
-## Believe they have all be prepped in another step, but read in template just to be sure
-template <- rast(here("data/costs/human_footprint_2022.tif"))
-# mask <- as.numeric(template); mask[mask > -1] <- 1
-# outline <- as.polygons(mask); rm(mask)
+## Get functions and data
+source(here("scripts/utils.R"))
+
+
 #-------------------------------- Features -------------------------------------
 ##------------------------- Strategic Ecosystems -------------------------------
 ## Paramos 

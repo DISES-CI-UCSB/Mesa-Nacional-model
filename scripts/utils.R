@@ -86,7 +86,8 @@ cost_abbr <- c(
 ## Create all permutations
 scenarios_df <- expand.grid(
   target = c(17, 30),
-  cost   = c("IHEH2022", "net benefit"),
+  cost   = c("IHEH2022", 
+             "net benefit"),   # not using net benefit/ag rent currently, but including for future
   KEEP.OUT.ATTRS = FALSE
 ) %>%
   merge(tibble(features = feature_combos)) %>%
@@ -103,6 +104,6 @@ scenarios_df <- expand.grid(
 
 ## Only want dataframe
 rm(feature_combos); rm(include_combos)
-rm(cost_abbr); rm(feature_abbr); rm(includes_abbr)
+rm(cost_abbr); rm(feature_abbr); rm(include_abbr)
 rm(get_combos)
 

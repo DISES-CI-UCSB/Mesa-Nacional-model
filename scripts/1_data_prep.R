@@ -180,15 +180,12 @@ spp_list <- spp_filtered_df %>%
   select(scientific_name, class, file_name)
 
 
-## Make sure matches other rasters
-template_r <- rast(file.path(ipt_dir, "cost_constraints_stack_1km.tif"))[[1]]
-
 ## Loop through remaining spp
 for (i in 1:nrow(spp_list)){
   if(i == 1) {
     ## Read in and resample raster to match res and ext exactly (slight diff); already same CRS
     r <- rast(spp_list$file_name[1]) %>% 
-      resample(., template_r, method = "near")
+      resample(., template, method = "near")
     
     ## change name to just spp
     names(r) <- spp_list$scientific_name[1]
@@ -201,7 +198,7 @@ for (i in 1:nrow(spp_list)){
     ## Loop through the rest and add to the matrix each time
   } else {
     r <- rast(spp_list$file_name[i]) %>% 
-      resample(., template_r, method = "near")
+      resample(., template, method = "near")
     names(r) <- spp_list$scientific_name[i]
     
     v2 <- values(r)
@@ -217,11 +214,13 @@ for (i in 1:nrow(spp_list)){
 saveRDS(vmat, file.path(ipt_dir, "biomod_filtered.rds"))
 
 
+
 #---------------------------- Costs & Constraints ------------------------------
 ## Human footprint
 ## IHEH 2022 was used as template, so just vectorize and save
 iheh_v <- as.matrix(template)
 saveRDS(iheh_v, file.path(ipt_dir, "IHEH_2022.rds"))
+
 
 ## IHEH 2030
 iheh_2030_r <- rast(here("data/costs/human_footprint_2030.tif")) %>% 
@@ -241,22 +240,25 @@ runap_r <- rast("data/includes/runap_protected_areas.tif") %>%
   resample(template, method = "near") %>% 
   classify(matrix(ncol = 2, c(NA, 0))) %>% 
   mask(template)
-## For now, just make it binary
+## For now, just make it binary. Later can decide whether categories matter.
 runap_r[runap_r > 1] <- 1
-
+## Save as matrix
 runap_v <- as.matrix(runap_r)
 saveRDS(runap_v, file.path(ipt_dir, "runap.rds"))
+
+
 
 ## OMECs
 omec_r <- rast(here("data/includes/omecs.tif")) %>% 
   resample(template, method = "near") %>% 
   classify(matrix(ncol = 2, c(NA, 0))) %>% 
   mask(template)
-## For now, make binary
+## For now, make binary. Later can decide whether categories matter.
 omec_r[omec_r > 1] <- 1
-
+## Save as matrix
 omec_v <- as.matrix(omec_r)
 saveRDS(omec_v, file.path(ipt_dir, "omec.rds"))
+
 
 
 ## Afro-Colombian communities
@@ -267,8 +269,10 @@ comunidades_v <- as.matrix(comunidades_r)
 saveRDS(comunidades_v, file.path(ipt_dir, "comunidades.rds"))
 
 
+
 ## Indigenous reserves
 resguardos_r <- rast(here("data/includes/resguardos.tif")) %>% 
   resample(template, method = "near")
+
 resguardos_v <- as.matrix(resguardos_r)
 saveRDS(resguardos_v, file.path(ipt_dir, "resguardos.rds"))

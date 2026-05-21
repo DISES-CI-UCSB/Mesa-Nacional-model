@@ -26,6 +26,80 @@ for (dir in c(temp_dir, ipt_dir)){
 source(here("scripts/utils.R"))
 
 
+#---------------------------- Costs & Constraints ------------------------------
+## Human footprint
+## IHEH 2022 was used as template, so just vectorize and save
+iheh_v <- as.matrix(template)
+saveRDS(iheh_v, file.path(ipt_dir, "IHEH_2022.rds"))
+
+
+## IHEH 2030
+iheh_2030_r <- rast(here("data/costs/human_footprint_2030.tif")) %>% 
+  resample(template, method = "bilinear")
+iheh_2030_v <- as.matrix(iheh_2030_r)
+saveRDS(iheh_2030_v, file.path(ipt_dir, "IHEH_2030.rds"))
+
+
+## Agricultural rent
+## NOTE: this isn't the correct, normalized layer??
+# renta_ag_r <- rast(here("data/costs/net_benefit.tif")) %>% 
+#   resample(template, method = "bilinear")
+
+
+## RUNAP
+runap_r <- rast("data/includes/runap_protected_areas.tif") %>% 
+  resample(template, method = "near") %>% 
+  classify(matrix(ncol = 2, c(NA, 0))) %>% 
+  mask(template)
+## For now, just make it binary. Later can decide whether categories matter.
+runap_r[runap_r > 1] <- 1
+writeRaster(runap_r, file.path(temp_dir, "runap.tif"))
+
+## Save as matrix
+runap_v <- as.matrix(runap_r)
+runap_v[is.na(runap_v)] <- 0
+saveRDS(runap_v, file.path(ipt_dir, "runap.rds"))
+
+
+
+## OMECs
+omec_r <- rast(here("data/includes/omecs.tif")) %>% 
+  resample(template, method = "near") %>% 
+  classify(matrix(ncol = 2, c(NA, 0))) %>% 
+  mask(template)
+## For now, make binary. Later can decide whether categories matter.
+omec_r[omec_r > 1] <- 1
+writeRaster(omec_r, file.path(temp_dir, "omec.tif"))
+
+## Save as matrix
+omec_v <- as.matrix(omec_r)
+omec_v[is.na(omec_v)] <- 0
+saveRDS(omec_v, file.path(ipt_dir, "omec.rds"))
+
+
+
+## Afro-Colombian communities
+comunidades_r <- rast(here("data/includes/comunidades.tif")) %>% 
+  resample(template, method = "near")
+writeRaster(comunidades_r, file.path(temp_dir, "comunidades.tif"))
+
+comunidades_v <- as.matrix(comunidades_r)
+comunidades_v[is.na(comunidades_v)] <- 0
+saveRDS(comunidades_v, file.path(ipt_dir, "comunidades.rds"))
+
+
+
+## Indigenous reserves
+resguardos_r <- rast(here("data/includes/resguardos.tif")) %>% 
+  resample(template, method = "near")
+writeRaster(resguardos_r, file.path(temp_dir, "resguardos.tif"))
+
+resguardos_v <- as.matrix(resguardos_r)
+resguardos_v[is.na(resguardos_v)] <- 0
+saveRDS(resguardos_v, file.path(ipt_dir, "resguardos.rds"))
+
+
+
 #-------------------------------- Features -------------------------------------
 ##------------------------- Strategic Ecosystems -------------------------------
 ## Paramos 
@@ -34,8 +108,10 @@ paramos_r <- rast(here("data/features/paramos.tif")) %>%
   resample(template, method = "near") %>%
   ## reclassify
   classify(matrix(ncol = 2, c(2, 0)))
+writeRaster(paramos_r, file.path(temp_dir, "paramos.tif"), overwrite = TRUE)
 
 paramos_v <- as.matrix(paramos_r)
+
 
 ## Bosque seco
 bosque_seco_r <- rast(here("data/features/bosque_seco.tif")) %>% 
@@ -43,13 +119,21 @@ bosque_seco_r <- rast(here("data/features/bosque_seco.tif")) %>%
   ## reclassify.. starts with only values of 1 and NA for some reason
   classify(matrix(ncol = 2, c(NA, 0))) %>% 
   mask(template)
+
+writeRaster(bosque_seco_r, file.path(temp_dir, "bosque_seco.tif"), overwrite = TRUE)
+
 bosque_seco_v <- as.matrix(bosque_seco_r)
+
 
 ## Mangroves
 manglares_r <- rast(here("data/features/mangroves.tif")) %>% 
   ## match
   resample(template, method = "near")
+
+writeRaster(manglares_r, file.path(temp_dir, "mangroves.tif"), overwrite = TRUE)
+
 manglares_v <- as.matrix(manglares_r)
+
 
 ## Wetlands
 humedales_r <- rast(here("data/features/humedales.tif")) %>% 
@@ -57,9 +141,13 @@ humedales_r <- rast(here("data/features/humedales.tif")) %>%
   resample(template, method = "near") %>%
   ## reclassify
   classify(matrix(ncol = 2, c(2, 0)))
+
+writeRaster(humedales_r, file.path(temp_dir, "humedales.tif"), overwrite = TRUE)
+
 humedales_v <- as.matrix(humedales_r)
 
 strat_ecos_v <- cbind(paramos_v, bosque_seco_v, manglares_v, humedales_v)
+strat_ecos_v <- as(strat_ecos_v, "dgCMatrix")
 saveRDS(strat_ecos_v, file.path(ipt_dir, "strategic_ecosystems.rds"))
 
 ##------------------------------- Ecosystems -----------------------------------
@@ -75,6 +163,7 @@ ecosys_sf <- read_sf(
 ## Could choose several different attributes, but for now using IAVH Biomes
 ecosys_df <- data.frame(
   biome = unique(ecosys_sf$bioma_IAvH)) %>% 
+  filter(biome != "N.A.") %>%           # weird manual NA in dataset
   mutate(biome_id = seq_len(nrow(.)))
 
 ## Add biome codes to shapefile, then rasterize
@@ -85,7 +174,7 @@ ecosys_r <- ecosys_sf %>%
   mask(template) # remove coastal areas
 
 ## Save the intermediate raster and biome code df
-writeRaster(ecosys_r, file.path(temp_dir, "ecosistemas_IAVH_2024.tif"))
+writeRaster(ecosys_r, file.path(temp_dir, "ecosistemas_IAVH_2024.tif"), overwrite = TRUE)
 write_csv(ecosys_df, file.path(temp_dir, "ecosistemas_IDs_IAVH_2024.csv"))
 
 
@@ -116,6 +205,63 @@ ecosys_mat <- sparseMatrix(
 ## Save
 saveRDS(ecosys_mat, file.path(ipt_dir, "ecosistemas_IAVH_2024.rds"))
 
+
+## How many ecosystems already are meeting targets under RUNAP and OMEC?
+ecosys_mat <- readRDS(file.path(ipt_dir, "ecosistemas_IAVH_2024.rds"))
+ids <- cells(template)
+
+ecosys_mat <- ecosys_mat[ids, ]
+ecosys_mat[is.na(ecosys_mat)] <- 0
+
+runap <- readRDS(file.path(ipt_dir, "runap.rds"))[ids, ] == 1
+runap[is.na(runap)] <- FALSE
+
+omec <- readRDS(file.path(ipt_dir, "omec.rds"))[ids, ] == 1
+omec[is.na(omec)] <- FALSE
+
+locked_runap <- runap
+locked_runap_omec <- runap | omec
+
+
+# Build summary dataframe
+ecosys_summary <- data.frame(
+  feature        = colnames(ecosys_mat),
+  total_cells    = colSums(ecosys_mat),
+  pct_runap      = colSums(ecosys_mat[locked_runap, ])      / colSums(ecosys_mat) * 100,
+  pct_runap_omec = colSums(ecosys_mat[locked_runap_omec, ]) / colSums(ecosys_mat) * 100
+) %>%
+  mutate(
+    meets_17_runap      = pct_runap      >= 17,
+    meets_30_runap      = pct_runap      >= 30,
+    meets_17_runap_omec = pct_runap_omec >= 17,
+    meets_30_runap_omec = pct_runap_omec >= 30
+  )
+
+rownames(ecosys_summary) <- NULL
+## Save for reference
+write_csv(ecosys_summary, file.path(temp_dir, "ecosystem_coverage.csv"))
+
+## Now make one in tidy format so we can filter matrix in main script
+targets <- c(17, 30)
+conservation_types <- c("RUNAP", "OMEC")
+combos <- expand_grid(target = targets, conservation_type = conservation_types)
+
+filter_ecos <- function(target, conservation_type) {
+  pct_col <- if (conservation_type == "RUNAP") "pct_runap" else "pct_runap_omec"
+  
+  ecosys_summary %>%
+    # Remove ecosystems already meeting the target
+    filter(.data[[pct_col]] < target) %>%
+    mutate(
+      targets = target,
+      conservation_type = conservation_type
+    )
+}
+
+ecosys_filtered_df <- map2_dfr(combos$target, combos$conservation_type, filter_ecos) %>% 
+  select(!c(meets_17_runap:meets_30_runap_omec))
+
+write_csv(ecosys_filtered_df, file.path(ipt_dir, "ecosys_filtered.csv"))
 
 
 ##------------------------------ BioModelos -----------------------------------
@@ -214,65 +360,3 @@ for (i in 1:nrow(spp_list)){
 saveRDS(vmat, file.path(ipt_dir, "biomod_filtered.rds"))
 
 
-
-#---------------------------- Costs & Constraints ------------------------------
-## Human footprint
-## IHEH 2022 was used as template, so just vectorize and save
-iheh_v <- as.matrix(template)
-saveRDS(iheh_v, file.path(ipt_dir, "IHEH_2022.rds"))
-
-
-## IHEH 2030
-iheh_2030_r <- rast(here("data/costs/human_footprint_2030.tif")) %>% 
-  resample(template, method = "bilinear")
-iheh_2030_v <- as.matrix(iheh_2030_r)
-saveRDS(iheh_2030_v, file.path(ipt_dir, "IHEH_2030.rds"))
-
-
-## Agricultural rent
-## NOTE: this isn't the correct, normalized layer??
-# renta_ag_r <- rast(here("data/costs/net_benefit.tif")) %>% 
-#   resample(template, method = "bilinear")
-
-
-## RUNAP
-runap_r <- rast("data/includes/runap_protected_areas.tif") %>% 
-  resample(template, method = "near") %>% 
-  classify(matrix(ncol = 2, c(NA, 0))) %>% 
-  mask(template)
-## For now, just make it binary. Later can decide whether categories matter.
-runap_r[runap_r > 1] <- 1
-## Save as matrix
-runap_v <- as.matrix(runap_r)
-saveRDS(runap_v, file.path(ipt_dir, "runap.rds"))
-
-
-
-## OMECs
-omec_r <- rast(here("data/includes/omecs.tif")) %>% 
-  resample(template, method = "near") %>% 
-  classify(matrix(ncol = 2, c(NA, 0))) %>% 
-  mask(template)
-## For now, make binary. Later can decide whether categories matter.
-omec_r[omec_r > 1] <- 1
-## Save as matrix
-omec_v <- as.matrix(omec_r)
-saveRDS(omec_v, file.path(ipt_dir, "omec.rds"))
-
-
-
-## Afro-Colombian communities
-comunidades_r <- rast(here("data/includes/comunidades.tif")) %>% 
-  resample(template, method = "near")
-
-comunidades_v <- as.matrix(comunidades_r)
-saveRDS(comunidades_v, file.path(ipt_dir, "comunidades.rds"))
-
-
-
-## Indigenous reserves
-resguardos_r <- rast(here("data/includes/resguardos.tif")) %>% 
-  resample(template, method = "near")
-
-resguardos_v <- as.matrix(resguardos_r)
-saveRDS(resguardos_v, file.path(ipt_dir, "resguardos.rds"))

@@ -1,19 +1,16 @@
-
+## script: Prioritizr Colombia (matrix)
+## Purpose: Set parameters and run prioritization models for Colombia
 
 # ========== SETTING UP =====================================================
 ## load packages
-library(prioritizr)
-library(sf)
-library(terra)
-library(vegan)
-library(cluster)
-library(tidyverse)
-library(doParallel)
-library(raster)
-library(ggplot2)
-library(gurobi)
-library(Matrix)
-library(here)
+library(prioritizr)  # modeling package
+library(gurobi)      # solver
+library(sf)          # vector data
+library(terra)       # raster/GIS data
+library(tidyverse)   # always
+library(Matrix)      # using sparse matrices
+library(here)        # easier filepaths
+library(purrr)       # run models over list
 
 ## Set seed and directories
 set.seed(500)
@@ -23,22 +20,12 @@ opt_dir <- here("results")
 
 for (dir in c(ipt_dir, opt_dir)){
   if (!dir.exists(dir)) dir.create(dir)  # Create directories if needed
-}
+}; rm(dir)
 
-## Load cost raster as template
-template <- rast(here("data/costs/human_footprint_2022.tif"))
 
-# ========== TARGETS ==========================================================
-
-## Determine which targets to use
-target <-
-  17
-  # 30
-  
-includes <-
-  "RUNAP"
-  # "OMEC"
-
+## Get the list of scenarios
+source(here("scripts/utils.R"))
+scenarios_df <- filter(scenarios_df, cost == "IHEH2022") # For now, only evaluating one cost
 
 # ========== GET PLANNING UNITS ================================================
 
@@ -52,189 +39,228 @@ pus <- pus[ids, ]
 pus[is.na(pus)] <- 0 #shouldn't be any NAs but can use in case
 
 
-# ========== CONSTRAINTS (LOCK INS/OUTS) =====================================
+# ========== PRIORITZATION FUNCTION ============================================
+## Wrapping all the model building and running inside a function 
+## to easily run over a list of scenarios.
 
-## Create lock_in matrix based on Targets selection
-if (includes == "RUNAP") {
-  runap <- readRDS(file.path(ipt_dir, "runap.rds"))
-  runap <- runap[ids, ]
+prioritizr_model <- function(target, cost, features, includes, model_name, ids, pus) {
+  ## Print scenario and time of start
+  message("Running scenario: ", model_name, 
+          "\nRun start: ", format(Sys.time(), "%H:%M:%S"))
   
-  locked_in <- (runap == 1)
-  rm(runap)
+  ## Unlist variables
+  features <- unlist(features)
+  includes <- unlist(includes)
   
-} else if (includes == "OMEC") {
-  runap <- readRDS(file.path(ipt_dir, "runap.rds"))
-  runap <- runap[ids, ]
-  omec <- readRDS(file.path(ipt_dir, "omec.rds"))
-  omec <- omec[ids, ]
+  # --------- CONSTRAINTS (LOCK INS/OUTS) -----------------------------
+  ## RUNAP is always included
+  locked_in <- readRDS(file.path(ipt_dir, "runap.rds"))[ids, ] == 1
   
-  locked_in <- (runap == 1) | (omec == 1)
-  rm(runap); rm(omec)
-}
-
-
-
-# ========== FEATURES ========================================================
-
-## Can change...
-# features_list <- c("ecosistemas", "paramos", "manglares", "humedales", "bosque_seco")
-
-## -------- Ecosystems -----------------------------------------------------
-## All ecosystems
-ecosys_v <- readRDS(file.path(ipt_dir, "ecosistemas_IAVH_2024.rds"))
-
-## Strategic ecosystems
-strat_ecos_v <- readRDS(file.path(ipt_dir, "strategic_ecosystems.rds"))
-
-
-## Combine all
-ecosystems <- cbind(ecosys_v, strat_ecos_v); rm(ecosys_v); rm(strat_ecos_v)
-ecosystems <- strat_ecos_v; rm(strat_ecos_v)
-ecosystems <- ecosystems[ids,]      # Only keep PUs
-ecosystems[is.na(ecosystems)] <- 0  # Remove lingering NAs
-
-## Transpose matrix and make sparse to match problem format
-ecosystems <- t(ecosystems)
-ecosys_sparse <- as(ecosystems, "sparseMatrix"); rm(ecosystems)
-
-
-## -------- Species -----------------------------------------------------
-## Read in large matrix
-mat <- readRDS(file.path(ipt_dir, "biomod_filtered.rds"))
-## transpose (rows == spp, columns == cell)
-species_rij <- mat %>% t() %>% as("dgCMatrix"); rm(mat)
-species_rij <- species_rij[, ids]
-
-## Filter matrix by determined goals
-species_df <- read_csv(file.path(ipt_dir, "biomod_spp_ranges_filtered.csv")) %>% 
-  filter(targets == target,
-         conservation_type == includes)
-
-row_idx <- setNames(seq_len(nrow(species_rij)), rownames(species_rij))
-idx <- row_idx[species_df$scientific_name]
-idx <- idx[!is.na(idx)]
-
-species_filtered <- species_rij[idx, ]; rm(species_rij)
-
-
-## Combine all features into one mat
-features_mat <- rbind(ecosys_sparse, species_filtered)
-
-n_features <- as.numeric(features_mat@Dim[1])
-feature_names <- features_mat@Dimnames[[1]]
-
-features_df <- data.frame(
-  id = 1:n_features,
-  name = feature_names
-)
-
-# ========== SET PROBLEM ======================================================
-
-# Set relative targets for features
-## For now, these are all the same!
-targets_df <- rep(target/100, n_features)
-boundaries <- prioritizr::boundary_matrix(template)[ids, ids]
-boundaries <- boundaries/max(boundaries) #scaling issue
-
-
-# Build problem with locked_in constraints
-## NOTE: eventually change this to a function to run over multiple targets and input scenarios...
-p1 <- problem(
-  x = pus,
-  features = features_df,
-  rij_matrix = features_mat) %>% 
-  add_min_set_objective() %>% 
-  add_relative_targets(targets_df) %>% 
-  add_locked_in_constraints(locked_in) %>% 
-  # add_locked_in_constraints(comunidades) |>
-  # add_locked_in_constraints(resguardo) |>
-  add_binary_decisions() %>% 
-  add_boundary_penalties(penalty = 0.001, data = boundaries) %>% 
-  # add_highs_solver(gap = 0.1, threads = 4)
-  add_gurobi_solver(gap = 0.05, threads = 6)
-
-print(p1)
-presolve_check(p1)
-
-
-# ========== SOLVE PROBLEM ====================================================
-## Get solution
-s1 <- solve(p1)
-
-## Create fxn to rasterize solution (outputs as matrix)
-rasterize_soln <- function(s, template) {
-  # Create output raster from template
-  rast <- template
-  rast[] <- NA
+  ## Add to locked_in matrix depending on scenario
+  if ("OMEC" %in% includes) {
+    ## Update to make any cell either condition as TRUE
+    locked_in <- locked_in | (readRDS(file.path(ipt_dir, "omec.rds"))[ids, ] == 1)
+  }
+  if ("comunidades" %in% includes) {
+    ## Update to make any cell either condition as TRUE
+    locked_in <- locked_in | (readRDS(file.path(ipt_dir, "comunidades.rds"))[ids, ] == 1)
+  }
+  if ("resguardos" %in% includes) {
+    ## Update to make any cell either condition as TRUE
+    locked_in <- locked_in | (readRDS(file.path(ipt_dir, "resguardos.rds"))[ids, ] == 1)
+  }
   
-  # Assign solution values to planning unit cells
-  rast[ids] <- s
+
   
-  # Mark existing PAs (locked-in units that were selected)
-  # 1 = new cells selected; 2 = existing PA; NA = not selected
-  rast[ids[which(locked_in == 1)]] <- 2
+  # --------- FEATURES -------------------------------------------------
+  # Now read in feature data for the scenario
+  ## Start with empty list to add features to
+  feature_list <- list()
   
-  # Set 0s to NA (not selected)
-  rast[rast == 0] <- NA
+  ## -------- Ecosystems ------------------------------------------
+  ## All ecosystems
+  if ("ecosystems" %in% features) {
+    ## Read in matrix
+    ecosys_v <- readRDS(file.path(ipt_dir, "ecosistemas_IAVH_2024.rds"))
+    ecosys_v <- ecosys_v[ids, ]
+    ## Read in df and filter to only ecosystems not meeting targets
+    cons_type <- ifelse("OMEC" %in% includes, "OMEC", "RUNAP") 
+    ecosys_df <- read_csv(file.path(ipt_dir, "ecosys_filtered.csv")) %>% 
+      filter (targets == target,
+              conservation_type == cons_type)
+    
+    ## Add to list
+    col_idx <- which(colnames(ecosys_v) %in% ecosys_df$feature)
+    feature_list[["ecosystems"]] <- ecosys_v[ , col_idx]
+    ## Remove to keep env memory low
+    rm(ecosys_v)
+  }
   
-  # Add category labels
-  levels(rast) <- data.frame(
-    value = 1:2,
-    layer = c("Selected", 
-              "Locked in") #NOTE!! : change this to just locked-in bc sometimes includes communities..
+  ## Strategic ecosystems
+  if ("strategic ecosystems" %in% features) {
+    strat_ecos_v <- readRDS(file.path(ipt_dir, "strategic_ecosystems.rds"))
+    strat_ecos_v <- strat_ecos_v[ids, ]
+    strat_ecos_v[is.na(strat_ecos_v)] <- 0  # fix NAs before converting
+    feature_list[["strategic ecosystems"]] <- as(strat_ecos_v, "dgCMatrix")
+    rm(strat_ecos_v)
+  }
+  
+  ## Combine if any/both were loaded
+  if (length(feature_list) > 0) {
+    ecosystems <- do.call(cbind, feature_list)
+    ecosystems[is.na(ecosystems)] <- 0  # Remove lingering NAs
+    
+    ## Transpose matrix and make sparse to match problem format
+    ecosys_sparse <- as(t(ecosystems), "sparseMatrix"); rm(ecosystems)
+  }
+  
+  
+  ## -------- Species ------------------------------------------
+  if ("species" %in% features) {
+    mat <- readRDS(file.path(ipt_dir, "biomod_filtered.rds"))
+    species_rij <- mat %>% t() %>% as("dgCMatrix"); rm(mat)    # transpose [rows == spp, columns == cell]
+    species_rij <- species_rij[, ids]
+    
+    #If OMEC are in includes, filter by that. Otherwise, just RUNAP
+    species_cons_type <- ifelse("OMEC" %in% includes, "OMEC", "RUNAP")  
+    
+    ## Filter dataframe and then matrix by determined goals
+    species_df <- read_csv(file.path(ipt_dir, "biomod_spp_ranges_filtered.csv")) %>%
+      filter(targets == target,                        # match target
+             conservation_type == species_cons_type,   # match RUNAP/OMEC
+             class != "Actinopteri")                   # for now, don't consider fish (Elkin's recommendation) 
+    
+    row_idx <- setNames(seq_len(nrow(species_rij)), rownames(species_rij))
+    idx <- row_idx[species_df$scientific_name]
+    idx <- idx[!is.na(idx)]
+    species_filtered <- species_rij[idx, ]; rm(species_rij)
+  }
+  
+  
+  ## -------- Combine Features ------------------------------------------
+  features_mat <- switch(
+    paste(c("ecosystems" %in% features | "strategic ecosystems" %in% features,  # if either includes, returns TRUE
+            "species" %in% features), collapse = "_"),
+    "TRUE_TRUE"  = rbind(ecosys_sparse, species_filtered),  # bind both
+    "TRUE_FALSE" = ecosys_sparse,                           # only ecosystems
+    "FALSE_TRUE" = species_filtered                         # only species
   )
   
-  return(rast)
-}
-
-s_rast <- rasterize_soln(s1, template)
-writeRaster(s_rast, 
-            file.path(opt_dir, sprintf("solution_%s_%s.tif", target, includes)), overwrite = TRUE) ## ALSO CHANGE THIS TO SPRINTF to bring in targets
-
-
-# ========== EVALUATE RESULTS =================================================
-run_name <- "Ecos30+ESTR30+RUNAP+Comunidades_HF"  # NOTE: build this into workflow!!
-target_coverage <- eval_target_coverage_summary(p1, s1) %>% 
-  mutate(scenario = run_name)
-# filter(absolute_target > 0)
-
-## Save summary df
-write_csv(target_coverage,
-          file.path(opt_dir, sprintf("solution_summary_%s_%s.csv", target, includes)))
-
-
-
-## Get overview stats and add to running solution df
-freq <- freq(s_rast)
-cost_summary <- eval_cost_summary(p1, s1) # Is this even meaninful? 
-eval_summary <- data.frame(
-  run = run_name,
-  n_total = sum(freq$count),
-  n_new_protection = pluck(subset(freq, value == "Selected"), "count"),
-  n_locked_in = pluck(subset(freq, value == "Locked in"), "count"),
-  cost = cost_summary$cost,
-  pct_targets_met = mean(p1_target_coverage$met) * 100
-)
-
-# Append eval_summary row to master CSV 
-if (file.exists(file.path(opt_dir, "master_eval_summary.csv"))) {   # Does this file exist?
-  ## Read in
-  summary_df <- read_csv(file.path(opt_dir, "master_eval_summary.csv"))
+  ## Get number and names of features
+  n_features <- as.numeric(features_mat@Dim[1])
+  feature_names <- features_mat@Dimnames[[1]]
   
-  ## Does the run exist? If so, overwrite
-  if (summary_df$run == eval_summary$run) {
-    summary_df[summary_df$run == eval_summary$run, ] <- eval_summary
-  } else {
+  features_df <- data.frame(
+    id = 1:n_features,
+    name = feature_names
+  )
+  
+
+  # --------- SET PROBLEM -------------------------------------------------
+  ## Set relative targets for features. For now, these are all the same!
+  targets_df <- rep(target/100, n_features)
+  
+  ## Boundary penalties
+  boundaries <- prioritizr::boundary_matrix(template)[ids, ids]
+  boundaries <- boundaries/max(boundaries) #scaling issue
+  
+  
+  ## Build problem 
+  p <- problem(
+    x = pus,
+    features = features_df,
+    rij_matrix = features_mat) %>% 
+    add_min_set_objective() %>% 
+    add_relative_targets(targets_df) %>% 
+    add_locked_in_constraints(locked_in) %>%
+    add_binary_decisions() %>% 
+    add_boundary_penalties(penalty = 0.001, data = boundaries) %>% 
+    add_gurobi_solver(gap = 0.05, threads = 15, verbose = FALSE)
+  
+  ## If problem fails presolve check, note it and skip to next
+  log_file <- file.path(opt_dir, "failed_scenarios.txt")
+  
+  s <- tryCatch({
+    if (!presolve_check(p))
+      stop(paste("Presolve check failed for scenario:", model_name))
+    solve(p)
+  }, error = function(e) {
+    message("Skipping ", model_name, ": ", e$message)
+    write(paste(Sys.time(), model_name, e$message, sep = " | "), 
+          file = log_file, append = TRUE)
+    return(NULL)
+  })
+  
+  ## Exit early if solve failed
+  if (is.null(s)) return (NULL)
+  
+  ## Rasterize solution and save
+  s_rast <- rasterize_soln(s, template, locked_in, ids)
+  writeRaster(s_rast, 
+              file.path(opt_dir, paste0(model_name, ".tif")), 
+              overwrite = TRUE) 
+  
+  # --------- EVALUATE RESULTS ---------------------------------------------
+  ## Save target-specific coverage for each scenario
+  target_coverage <- eval_target_coverage_summary(p, s) %>%
+    mutate(scenario = model_name)
+  # filter(absolute_target > 0)
+  write_csv(target_coverage, file.path(opt_dir, paste0(model_name, "_summary.csv")))
+  
+  
+  ## Get overview stats and add to running solution df
+  freq_tbl <- freq(s_rast)
+  cost_summary <- eval_cost_summary(p, s) # Is this even meaningful? 
+  eval_summary <- data.frame(
+    run = model_name,
+    n_total = sum(freq_tbl$count),
+    n_new_protection = get_freq(freq_tbl, "Priority area"),
+    n_locked_in = get_freq(freq_tbl, "Locked in"),
+    cost = cost_summary$cost,
+    pct_targets_met = mean(target_coverage$met) * 100
+  )
+  
+  # Append eval_summary row to master CSV 
+  csv_path <- file.path(opt_dir, "master_eval_summary.csv")
+  
+  if (file.exists(csv_path)) {
+    summary_df <- read_csv(csv_path, show_col_types = FALSE)
+    
+    ## Does the run exist? If so, overwrite
+    if (any(summary_df$run == eval_summary$run)) {
+      summary_df[summary_df$run == eval_summary$run, ] <- eval_summary
+    } else {
     ## If not, append to table
-    summary_df <- rbind(summary_df, eval_summary)
+      summary_df <- rbind(summary_df, eval_summary)
+    }
+    
+    ## If file hasn't yet been created, then create it
+  } else {
+    summary_df <- eval_summary
   }
   
   ## Save
-  write_csv(summary_df, file.path(opt_dir, "master_eval_summary.csv"))
+  write_csv(summary_df, csv_path)
   
-  ## If file hasn't yet been created, then create it
-} else {
-  write.csv(eval_summary, file.path(opt_dir, "master_eval_summary.csv"), row.names = FALSE)
+  gc()
 }
 
+
+
+# ========== RUN PRIORITIZATION ==============================================
+## If process stopped part-way, use this code to remove scenarios already completed
+# completed <- read_csv(file.path(opt_dir, "master_eval_summary.csv"))
+# failed <- file.path(opt_dir, "failed_scenarios.txt")
+# failed <- read.table(failed, sep = "|", 
+#                          col.names = c("time", "model_name", "error"),
+#                          strip.white = TRUE)
+# failed_list <- unique(failed$model_name)
+# scenarios_df <- scenarios_df %>%
+#   filter(!model_name %in% completed$run) %>% 
+#   filter(!model_name %in% failed_list)
+# rm(completed); rm(failed); rm(failed_list)
+
+
+## Generate model over list of scenarios
+purrr::pmap(scenarios_df, prioritizr_model, ids = ids, pus = pus)
 

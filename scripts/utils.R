@@ -18,9 +18,9 @@ template <- rast(here("data/costs/human_footprint_2022.tif"))
 mask <- as.numeric(template); mask[mask > -1] <- 1
 outline <- as.polygons(mask); rm(mask)
 
-# ========== RASTERIZE SOLUTION ==============================================
+# ========== FUNCTIONS ==============================================
 ## Create fxn to rasterize solution (outputs as matrix)
-rasterize_soln <- function(s, template) {
+rasterize_soln <- function(s, template, locked_in, ids) {
   # Create output raster from template
   rast <- template
   rast[] <- NA
@@ -38,11 +38,18 @@ rasterize_soln <- function(s, template) {
   # Add category labels
   levels(rast) <- data.frame(
     value = 1:2,
-    layer = c("Selected", 
-              "Locked in") #NOTE!! : change this to just locked-in bc sometimes includes communities..
+    layer = c("Priority area", 
+              "Locked in")
   )
   
   return(rast)
+}
+
+
+## Get cell counts from rasterized outputs
+get_freq <- function(freq_df, val) {
+  x <- subset(freq_df, as.character(value) == val)$count
+  if (length(x) == 0) 0 else x
 }
 
 

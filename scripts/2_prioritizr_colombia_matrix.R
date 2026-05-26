@@ -175,7 +175,7 @@ prioritizr_model <- function(target, cost, features, includes, model_name, ids, 
     add_locked_in_constraints(locked_in) %>%
     add_binary_decisions() %>% 
     add_boundary_penalties(penalty = 0.001, data = boundaries) %>% 
-    add_gurobi_solver(gap = 0.05, threads = 15, verbose = FALSE)
+    add_gurobi_solver(gap = 0.05, threads = 15, verbose = TRUE)
   
   ## If problem fails presolve check, note it and skip to next
   log_file <- file.path(opt_dir, "failed_scenarios.txt")
@@ -226,41 +226,230 @@ prioritizr_model <- function(target, cost, features, includes, model_name, ids, 
   if (file.exists(csv_path)) {
     summary_df <- read_csv(csv_path, show_col_types = FALSE)
     
-    ## Does the run exist? If so, overwrite
     if (any(summary_df$run == eval_summary$run)) {
+      ## Does the run exist? If so, overwrite
       summary_df[summary_df$run == eval_summary$run, ] <- eval_summary
+      
     } else {
-    ## If not, append to table
+      ## If not, append to table
       summary_df <- rbind(summary_df, eval_summary)
     }
     
-    ## If file hasn't yet been created, then create it
   } else {
-    summary_df <- eval_summary
+    summary_df <- eval_summary   # If file hasn't yet been created, then create it
   }
   
-  ## Save
+  ## Save master summary
   write_csv(summary_df, csv_path)
-  
   gc()
-}
-
-
-
-# ========== RUN PRIORITIZATION ==============================================
-## If process stopped part-way, use this code to remove scenarios already completed
-# completed <- read_csv(file.path(opt_dir, "master_eval_summary.csv"))
-# failed <- file.path(opt_dir, "failed_scenarios.txt")
-# failed <- read.table(failed, sep = "|", 
-#                          col.names = c("time", "model_name", "error"),
-#                          strip.white = TRUE)
-# failed_list <- unique(failed$model_name)
-# scenarios_df <- scenarios_df %>%
-#   filter(!model_name %in% completed$run) %>% 
-#   filter(!model_name %in% failed_list)
-# rm(completed); rm(failed); rm(failed_list)
+  
+  
+} # END PRIORITIZR FUNCTION
 
 
 ## Generate model over list of scenarios
 purrr::pmap(scenarios_df, prioritizr_model, ids = ids, pus = pus)
+# ========== RUN PRIORITIZATION ==============================================
+# If process stopped part-way, use this code to remove scenarios already completed
+completed <- read_csv(file.path(opt_dir, "master_eval_summary.csv"))
+failed <- file.path(opt_dir, "failed_scenarios.txt")
+failed <- read.table(failed, sep = "|",
+                         col.names = c("time", "model_name", "error"),
+                         strip.white = TRUE) %>%
+  ## remove memory errors for now
+  filter(error == "Error 10001: Out of memory")
+failed_list <- unique(failed$model_name)
+scenarios_df <- scenarios_df %>%
+  filter(!model_name %in% completed$run)
+  # filter(!model_name %in% failed_list)
+rm(completed); rm(failed); rm(failed_list)
 
+## Generate model over list of scenarios
+purrr::pmap(scenarios_df, prioritizr_model, ids = ids, pus = pus)
+
+
+
+
+# ========== FULL SUMMARY STATS ==============================================
+# Because some species and ecosystems (that already met baseline target) 
+# were not included, need to get their coverage stats at a national level as well
+ids <- cells(template)
+
+## --------- 1. Get which cells were part of each solution -------------------
+## Get file paths
+solution_files <- list.files(opt_dir, pattern = "\\.tif$", full.names = TRUE)
+
+## Table of completed solutions
+soln_lookup <- tibble(path = solution_files,
+                      model_name = tools::file_path_sans_ext(basename(solution_files))) %>%
+  filter(model_name %in% scenarios_df$model_name)
+
+## For each scenario, get the selected cell indices and evaluated feature names
+scenario_meta <- purrr::pmap(soln_lookup, function(path, model_name) {
+  s_rast <- rast(path)
+  soln_vec <- values(s_rast, dataframe = FALSE)[ids]
+  selected_ids <- ids[!is.na(soln_vec) & soln_vec > 0]
+  
+  evaluated <- read_csv(
+    file.path(opt_dir, paste0(model_name, "_summary.csv")),
+    show_col_types = FALSE
+  )$feature
+  
+  ## Pull target value for this scenario from scenarios_df
+  target <- scenarios_df$target[scenarios_df$model_name == model_name]
+  
+  list(model_name = model_name, selected_ids = selected_ids, 
+       evaluated = evaluated, target = target)
+})
+
+
+## --------- 2. Loop through species taxons -----------------------------------
+## Load each species taxon class matrix, compute coverage across ALL scenarios, then discard it
+class_names <- c("Aves", "Mammalia", "Crocodylia", 
+                 "Squamata", "Magnoliospida_1", "Magnoliospida_2")
+
+class_files <- list.files(ipt_dir, pattern = "\\.rds$", full.names = TRUE) %>% 
+  keep(~ tools::file_path_sans_ext(basename(.x)) %in% class_names)
+
+## Will collect one data frame per class, rbind at the end
+spp_coverage <- list()
+
+for (f in class_files) {
+  class_name <- tools::file_path_sans_ext(basename(f))
+  message("Processing class: ", class_name)
+  
+  mat <- readRDS(f)  # [cells x species], sparse binary
+  
+  ## Total range per species (denominator). Compute once per matrix
+  spp_totals <- colSums(mat)
+  spp_names  <- colnames(mat)
+  
+  ## For each scenario, subset to selected cells and compute coverage
+  class_coverage <- purrr::map_dfr(scenario_meta, function(scen) {
+    ## Which features were not explicitly evaluated?
+    unevaluated <- setdiff(spp_names, scen$evaluated)
+    if (length(unevaluated) == 0) return(NULL)
+    
+    ## Get stats
+    totals <- spp_totals[unevaluated]
+    in_soln <- colSums(mat[scen$selected_ids, unevaluated, drop = FALSE])
+    abs_target <- totals * (scen$target / 100)
+    rel_held <- in_soln / totals
+    
+    ## Create table matching format of prioritizr summary outputs
+    tibble(
+      feature = unevaluated,
+      met = rel_held >= (scen$target / 100),
+      total_amount = totals,
+      absolute_target = abs_target,
+      absolute_held = in_soln,
+      absolute_shortfall = pmax(0, abs_target - in_soln),
+      relative_target = scen$target / 100,
+      relative_held = rel_held,
+      relative_shortfall = pmax(0, (scen$target / 100) - rel_held),
+      scenario = scen$model_name,
+      type = "species",
+      class = class_name
+    )
+  })
+  
+  spp_coverage[[class_name]] <- class_coverage
+  rm(mat); gc()
+}
+
+
+## --------- 3. Loop of ecosystems -------------------------------------
+ecosys_mat <- readRDS(file.path(ipt_dir, "ecosistemas_IAVH_2024.rds"))
+ecosys_totals <- colSums(ecosys_mat)
+ecosys_names <- colnames(ecosys_mat)
+
+ecosys_coverage <- purrr::map_dfr(scenario_meta, function(scen) {
+  unevaluated <- setdiff(ecosys_names, scen$evaluated)
+  if (length(unevaluated) == 0) return(NULL)
+  
+  totals <- ecosys_totals[unevaluated]
+  in_soln <- colSums(ecosys_mat[scen$selected_ids, unevaluated, drop = FALSE])
+  abs_target <- totals * (scen$target / 100)
+  rel_held <- in_soln / totals
+  
+  tibble(
+    feature = unevaluated,
+    met = rel_held >= (scen$target / 100),
+    total_amount = totals,
+    absolute_target = abs_target,
+    absolute_held = in_soln,
+    absolute_shortfall = pmax(0, abs_target - in_soln),
+    relative_target = scen$target / 100,
+    relative_held = rel_held,
+    relative_shortfall = pmax(0, (scen$target / 100) - rel_held),
+    scenario = scen$model_name,
+    type = "ecosystem",
+    class = NA_character_  #can replace this with specific ecosys class later
+  )
+})
+
+rm(ecosys_mat); gc()
+
+## --------- 4. Combine and save -------------------------------------
+all_coverage <- bind_rows(c(spp_coverage, list(ecosys_coverage))) %>% 
+  ## Merge all plants back 
+  mutate(class = case_when(
+    class %in% c("Magnoliospida_1", "Magnoliospida_2") ~ "Magnoliospida",
+    .default = class
+  ))
+write_csv(all_coverage, file.path(opt_dir, "unevaluated_feature_coverage.csv"))
+
+
+
+## NOTE: Ask Will if one master CSV vs individual ones are best
+
+## Get the "type" of feature and "class" of already evaluated features
+species_lookup <- purrr::map_dfr(class_files, ~ {
+  mat <- readRDS(.x)
+  tibble(
+    feature = colnames(mat),
+    type = "species",
+    class = tools::file_path_sans_ext(basename(.x))
+  )
+})
+
+ecosys_lookup <- tibble(
+  feature = ecosys_names,  # already in memory from step 3
+  type = "ecosystem",
+  class = NA_character_)
+
+feature_lookup <- bind_rows(species_lookup, ecosys_lookup) %>% 
+  ## Merge all plants back 
+  mutate(class = case_when(
+    class %in% c("Magnoliospida_1", "Magnoliospida_2") ~ "Magnoliospida",
+    .default = class
+  ))
+
+
+### If individual: 
+all_coverage %>% 
+  group_by(scenario) %>% 
+  group_walk(~ {
+    ## Make sure scenario summary CSV exists
+    csv_path <- file.path(opt_dir, paste0(.y$scenario, "_summary.csv"))
+    if (!file.exists(csv_path)) {
+      message("Skipping (no CSV found): ", .y$scenario)
+      return()
+    }
+    
+    existing <- read_csv(csv_path, show_col_types = FALSE) %>%
+      left_join(feature_lookup, by = "feature")
+    bind_rows(existing, .x) %>%
+      write_csv(csv_path)
+  })
+
+# 
+# ### If one master one:
+# all_summaries <-
+#   list.files(opt_dir, 
+#              pattern = "_summary\\.csv$", 
+#              full.names = TRUE) %>%
+#   map_dfr(read_csv, show_col_types = FALSE)
+# 
+# write_csv(all_summaries, file.path(opt_dir, "all_feature_coverage.csv"))
+# 

@@ -318,7 +318,7 @@ spp_filtered_df <- map2_dfr(combos$target, combos$conservation_type, filter_spp)
 write_csv(spp_filtered_df, file.path(ipt_dir, "biomod_spp_ranges_filtered.csv"))
 
 
-## Next, create the sparse matrix for ALL potential spp
+## Next, create the sparse matrix for filtered potential spp
 ## So filter for lowest threshold, returning most spp
 spp_list <- spp_filtered_df %>% 
   filter(targets == 30,
@@ -359,4 +359,92 @@ for (i in 1:nrow(spp_list)){
 ## Export
 saveRDS(vmat, file.path(ipt_dir, "biomod_filtered.rds"))
 
+
+
+## Finally, create a sparse matrix for ALL of the species data, which will be used for 
+## generating metrics after running the prioritization models
+spp_df <- read_csv(file.path(temp_dir, "biomod_spp_ranges_updatedIUCN.csv")) %>% 
+  ## Remove fish for now
+  # filter(class != "Actinopteri") %>% 
+  filter(class == "Magnoliopsida") %>% #run later
+  ## 3: Remove species with range under 1km
+  filter(range_km2 > 1) %>%
+  mutate(file_name = file.path(
+    biomod_fp, 
+    "presente",
+    paste0(sub(" ", "_", scientific_name), "_10_MAXENT.tif")
+  ))
+
+classes <- unique(spp_df$class)
+
+## Loop through spp and make matrices for each taxonomic class
+for (current_class in classes) {
+  message("Working on: ", current_class)
+  class_list <- spp_df %>% filter(class == current_class)
+  
+  for (i in 1:nrow(class_list)){
+    if(i == 1) {
+      ## Read in and resample raster to match res and ext exactly (slight diff); already same CRS
+      r <- rast(class_list$file_name[1]) %>% 
+        resample(., template, method = "near")
+      
+      ## change name to just spp
+      names(r) <- class_list$scientific_name[1]
+      
+      ## Get binary values, then turn into sparse matrix
+      v <- values(r)
+      v[is.na(v)]<-0
+      vmat <- as(v,'sparseMatrix')
+      
+      ## Loop through the rest and add to the matrix each time
+    } else {
+      r <- rast(class_list$file_name[i]) %>% 
+        resample(., template, method = "near")
+      names(r) <- class_list$scientific_name[i]
+      
+      v2 <- values(r)
+      v2[is.na(v2)]<-0
+      vmat2 <- as(v2,'sparseMatrix')
+      vmat <- cbind(vmat, vmat2)
+      
+      progress(i-1, max.value=nrow(class_list))
+    }
+  }
+  ## Export
+  saveRDS(vmat, file.path(ipt_dir, sprintf("%s.rds", current_class)))
+  rm(vmat)
+}
+
+
+# for (i in 1:nrow(spp_df)){
+#   if(i == 1) {
+#     ## Read in and resample raster to match res and ext exactly (slight diff); already same CRS
+#     r <- rast(spp_df$file_name[1]) %>% 
+#       resample(., template, method = "near")
+#     
+#     ## change name to just spp
+#     names(r) <- spp_df$scientific_name[1]
+#     
+#     ## Get binary values, then turn into sparse matrix
+#     v <- values(r)
+#     v[is.na(v)]<-0
+#     vmat <- as(v,'sparseMatrix')
+#     
+#     ## Loop through the rest and add to the matrix each time
+#   } else {
+#     r <- rast(spp_df$file_name[i]) %>% 
+#       resample(., template, method = "near")
+#     names(r) <- spp_df$scientific_name[i]
+#     
+#     v2 <- values(r)
+#     v2[is.na(v2)]<-0
+#     vmat2 <- as(v2,'sparseMatrix')
+#     vmat <- cbind(vmat, vmat2)
+#     
+#     progress(i-1, max.value=nrow(spp_df))
+#   }
+# }
+# 
+# ## Export
+# saveRDS(vmat, file.path(ipt_dir, "biomod_full.rds"))
 

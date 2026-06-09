@@ -8,15 +8,56 @@ if (!require("pacman")) install.packages("pacman")
 pacman::p_load(       # automatically installs packages if needed
   tidyverse,          # always
   here,               # easier file paths
+  terra,              # GIS 
+  sf,                 # vector functions
   purrr)              # faster lapply
 
-## Set template for creating datasets 
-template <- rast(here("data/costs/human_footprint_2022.tif"))
-## NOTE: Can change CRS in this script later if neededd
+## Local directories
+temp_dir <- here("data/temp_outputs")     # Store intermediate/temporary outputs
+geo_dir <- here("data/model_input_lyrs")  # GeoTIFs of input layers used
+ipt_dir <- here("data/model_inputs")      # Inputs directly used in prioritizr model
 
-## Create outline polygon if neede for masking too
-mask <- as.numeric(template); mask[mask > -1] <- 1
+for (dir in c(temp_dir, geo_dir, ipt_dir)){
+  if (!dir.exists(dir)) dir.create(dir)
+} ; rm(dir)
+
+# ========== TEMPLATES ==============================================
+## Use the MAGNA-SIRGAS/CTM-12 as it's official projection for Colombia
+my_crs <- "EPSG:9377"
+
+## Use Humboldt-produced raster as base for Colombian extent. 
+## In a geodatabase, so find the correct layer (IHEH 2022)
+# info <- describe("data/costs/HEH_2022.gdb")
+# print(info)
+
+
+## If template hasn't yet been created, run this code. 
+## Otherwise, save time and read in existing layer
+if (!file.exists(file.path(geo_dir, "IHEH_2022.tif"))) {
+  template <- rast('OpenFileGDB:"data/costs/HEH_2022.gdb":IHEH') %>% 
+    ## First put into CRS of interest, mostly preserving native resolution
+    project(., my_crs, method = "bilinear") %>%
+    ## Second, aggregate to get cells closer to desired resolution (1km)
+    aggregate(
+      fact = floor(1000 / res(.)[1]), #factor must be integer, so round down
+      fun = "mean", 
+      na.rm = TRUE
+    ) %>% 
+    ## Finally, make sure it's exactly 1km resolution
+    project(., my_crs, method = "bilinear", res = 1000)
+  
+  ## Save template raster as updated IHEH2022
+  writeRaster(template, file.path(geo_dir, "IHEH_2022.tif"), overwrite = TRUE)
+  
+} else {
+  template <- rast(file.path(geo_dir, "IHEH_2022.tif"))
+}
+
+## Country outline for mapping
+mask <- as.numeric(template)
+mask[mask > -1] <- 1
 outline <- as.polygons(mask); rm(mask)
+
 
 # ========== FUNCTIONS ==============================================
 ## Create fxn to rasterize solution (outputs as matrix)

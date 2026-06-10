@@ -25,7 +25,8 @@ for (dir in c(temp_dir, geo_dir, ipt_dir)){
 ## Use the MAGNA-SIRGAS/CTM-12 as it's official projection for Colombia
 my_crs <- "EPSG:9377"
 
-## Use Humboldt-produced raster as base for Colombian extent. 
+## ------ Terrestrial -------------------------------------------
+## Use Humboldt-produced raster as base for terrestrial Colombian extent. 
 ## In a geodatabase, so find the correct layer (IHEH 2022)
 # info <- describe("data/costs/HEH_2022.gdb")
 # print(info)
@@ -33,8 +34,8 @@ my_crs <- "EPSG:9377"
 
 ## If template hasn't yet been created, run this code. 
 ## Otherwise, save time and read in existing layer
-if (!file.exists(file.path(geo_dir, "IHEH_2022.tif"))) {
-  template <- rast('OpenFileGDB:"data/costs/HEH_2022.gdb":IHEH') %>% 
+if (!file.exists(file.path(geo_dir, "template_terrestre.tif"))) {
+  iheh_r <- rast('OpenFileGDB:"data/costs/HEH_2022.gdb":IHEH') %>% 
     ## First put into CRS of interest, mostly preserving native resolution
     project(., my_crs, method = "bilinear") %>%
     ## Second, aggregate to get cells closer to desired resolution (1km)
@@ -47,16 +48,58 @@ if (!file.exists(file.path(geo_dir, "IHEH_2022.tif"))) {
     project(., my_crs, method = "bilinear", res = 1000)
   
   ## Save template raster as updated IHEH2022
-  writeRaster(template, file.path(geo_dir, "IHEH_2022.tif"), overwrite = TRUE)
+  writeRaster(iheh_r, file.path(geo_dir, "IHEH_2022.tif"), overwrite = TRUE)
+  
+  ## Also save as terrestrial template of one value
+  template_terra <- iheh_r
+  template_terra[!is.na(template_terra)] <- 1
+  names(template_terra) <- "template_terrestre"
+  writeRaster(template_terra, 
+              file.path(geo_dir, "template_terrestre.tif"), 
+              overwrite = TRUE)
   
 } else {
-  template <- rast(file.path(geo_dir, "IHEH_2022.tif"))
+  template_terra <- rast(file.path(geo_dir, "template_terrestre.tif"))
 }
 
-## Country outline for mapping
-mask <- as.numeric(template)
-mask[mask > -1] <- 1
-outline <- as.polygons(mask); rm(mask)
+
+## ------ Marine -----------------------------------
+## Using marine ecosystems to generate template raster
+if (!file.exists(file.path(geo_dir, "template_marino.tif"))) {
+  mar_v <- vect(here("data/features/Union_Profundo_Somero/Union_Profundo_Somero.shp")) %>% 
+    project(., my_crs)
+  
+  mar_r <- rast(
+    ext(mar_v),
+    resolution = 1000,
+    crs = my_crs)
+  
+  ## Just create template for now, marine ecosys layer fully processed later in 1_data_prep.R
+  template_mar <- rasterize(mar_v, mar_r)
+  names(template_mar) <- "template_marino"
+  writeRaster(template_mar, 
+              file.path(geo_dir, "template_marino.tif"), 
+              overwrite = TRUE)
+} else {
+  template_mar <- rast(file.path(geo_dir, "template_marino.tif"))
+  
+}
+
+## ------ Combined template -----------------------------------
+## Combined template doesn't have values, since it will not be used
+## to generate PUs for models. Just used for PAs and OMECs
+combined_ext <- ext(
+  min(xmin(template_terra), xmin(template_mar)), # xmin
+  max(xmax(template_terra), xmax(template_mar)), # xmax
+  min(ymin(template_terra), ymin(template_mar)), # ymin
+  max(ymax(template_terra), ymax(template_mar))  # ymax
+)
+
+template_combined <- rast(
+  ext = combined_ext,
+  resolution = 1000,
+  crs = my_crs
+)
 
 
 # ========== FUNCTIONS ==============================================

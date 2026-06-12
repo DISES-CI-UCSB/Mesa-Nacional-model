@@ -590,6 +590,11 @@ write_csv(spp_ranges_updated_df, file.path(temp_dir, "biomod_spp_ranges_updatedI
 ## Read in updated df if needed
 spp_ranges_updated_df <- read_csv(file.path(temp_dir, "biomod_spp_ranges_updatedIUCN.csv"))
 
+
+####---- Representativeness --------------------------------
+# One method for setting species targets is general representativeness,
+# or ensuring at least 17% or 30% of their range is within a conserved area.
+
 ## Set parameters
 targets <- c(17, 30)                     # 17% and 30% representivity targets
 conservation_types <- c("RUNAP", "OMEC") # Existing coverage by RUNAP and OMEC+RUNAP
@@ -598,7 +603,7 @@ combos <- expand_grid(                   # Create tibble of all the combinations
   conservation_type = conservation_types)
 
 ## Function that applies all filters for a given target + conservation type
-filter_spp <- function(target, conservation_type) {
+filter_spp_rep <- function(target, conservation_type) {
   ## Select the right coverage % column based on conservation type
   pct_col <- if (conservation_type == "RUNAP") {
     "range_pct_runap"
@@ -627,7 +632,7 @@ filter_spp <- function(target, conservation_type) {
 }
 
 ## Apply across all combos and stack into one tidy df
-spp_filtered_df <- map2_dfr(combos$target, combos$conservation_type, filter_spp) %>%
+spp_filtered_rep_df <- map2_dfr(combos$target, combos$conservation_type, filter_spp_rep) %>%
   ## get filename of each spp
   mutate(file_name = file.path(
     biomod_fp, 
@@ -636,8 +641,144 @@ spp_filtered_df <- map2_dfr(combos$target, combos$conservation_type, filter_spp)
   ))
 
 ## Save this df for filtering in prioritizr run script
-write_csv(spp_filtered_df, file.path(ipt_dir, "biomod_spp_ranges_filtered.csv"))
+write_csv(spp_filtered_rep_df, file.path(ipt_dir, "biomod_spp_filtered_representivity.csv"))
 
+
+####---- National Responsibility --------------------------------
+# The other method for targets is national responsibility, which sets individual
+# species targets based on their range size, threatened status, and endemism.
+
+#NOTE: WILL UPDATE THESE SPECIFIC METHODS AFTER DISCUSSION WITH MESA NACIONAL
+spp_nr_df <- spp_ranges_updated_df %>% 
+  ## Filter out any species with ranges of 0km2
+  filter(range_km2 > 1) %>% 
+  ## At Elkin's sugggestion, remove fish for now
+  ## NOTE: CHANGE THIS?? 
+  filter(class != "Actinopteri") %>% 
+  ## What if filter? 
+  # filter(range_pct_country >= 0.1) %>%
+  mutate(
+    ## change pct to numbers
+    range_pct_country = range_pct_country/100,
+    ## Set min and max values for country percentage covered by range (NOTE: WHY????)
+    range_pct_country = pmin(pmax(range_pct_country, 0.001), 0.9),
+
+    ## Create weights based on threatened status (NOTE: for now using IUCN bc not enough national data)
+    w_amenaza = case_when(
+      iucn_status == "CR" ~ 1.0,
+      iucn_status == "EN" ~ 0.78,
+      iucn_status == "VU" ~ 0.33,
+      iucn_status == "NT" ~ 0.14,
+      .default = 0.05 # LC, LR, and DD 
+    ),
+    
+    ## Get the max and min ranges across all species
+    min_range = min(range_km2, na.rm = TRUE),
+    max_range = max(range_km2, na.rm = TRUE),
+    
+    ## Determine "range effect" for each spp (NOTE: methods for this formula??)
+    range_effect = 1 - (log10(range_km2) - log10(min_range)) / (log10(max_range) - log10(min_range)), 
+    range_effect = 0.1 + range_effect * 0.9,
+    
+    ## Finally, get the overall national responsibility 
+    responsibility = case_when(
+      endemic == 1 ~ w_amenaza * range_effect,
+      endemic == 0 ~ w_amenaza * range_effect * (1 - range_pct_country)
+    ),
+    
+    ## What is the area based target for each species?
+    target = range_km2 * responsibility,
+    
+    ## So, which species already meet their target within existing conservation areas?
+    target_met_runap = case_when(
+      range_runap_km2 >= target ~ TRUE,
+      range_runap_km2 < target ~ FALSE
+    ),
+    
+    target_met_omec_runap = case_when(
+      range_omec_runap_km2 >= target ~ TRUE,
+      range_omec_runap_km2 < target ~ FALSE
+    )
+  )
+
+# ## Visualize responsibility spread
+# thres <- spp_nr_df %>% filter(responsibility <= 0.3) #Cut off long tail to visualize easier
+# 
+# ggplot(thres, aes(x = responsibility)) +
+#   geom_histogram(bins = 30, color = "black", fill = "steelblue4", alpha = 0.6) +
+#   theme_minimal()+
+#   stat_bin(
+#     bins = 30,
+#     geom = "text",
+#     size = 3.5,
+#     aes(label = after_stat(count)),
+#     vjust = -0.5
+#   ) +
+#   labs(
+#     x = "Responsibilidad",
+#     y = "n especies"
+#   )
+# 
+# ## How many spp met target? 
+# targets_met <- spp_nr_df %>% 
+#   pivot_longer(cols = target_met_runap:target_met_omec_runap, names_to = "conservation_type") %>% 
+#   group_by(conservation_type, value, class) %>% 
+#   summarize(n = n()) %>% 
+#   mutate(conservation_type = recode(conservation_type,
+#                                       "target_met_runap" = "RUNAP",
+#                                       "target_met_omec_runap"= "OMEC"),
+#          value = case_when(
+#            value == TRUE ~ "NR target met", 
+#            value == FALSE ~ "NR target not met"))
+# 
+# ggplot(targets_met, aes(x = class, y = n, fill = conservation_type)) +
+#   geom_col(position = "dodge", 
+#            alpha = 0.55, 
+#            linewidth = 1, 
+#            aes(color = conservation_type)) +
+#   facet_wrap(~value)+
+#   geom_text(
+#     aes(label = n),
+#     position = position_dodge(width = 0.9),
+#     vjust = -.8,
+#     color = "black",
+#     fontface = "bold",
+#     size = 3
+#   ) +
+#   theme_bw() +
+#   labs(y = "n especies",
+#        fill = "Conservation Type",
+#        color = "Conservation Type")+
+#   theme(
+#     axis.title.x = element_blank(),
+#     axis.text.x = element_text(angle = 25, vjust = 0.6),
+#   )
+# 
+# targets_met %>% 
+#   filter(value == "NR target not met") %>%
+# ggplot(aes(x = class, y = n, fill = conservation_type)) +
+#   geom_col(position = "dodge", 
+#            alpha = 0.55, 
+#            linewidth = 1, 
+#            aes(color = conservation_type)) +
+#   # facet_wrap(~value)+
+#   geom_text(
+#     aes(label = n),
+#     position = position_dodge(width = 0.9),
+#     vjust = -.8,
+#     color = "black",
+#     fontface = "bold",
+#     size = 3
+#   ) +
+#   theme_bw() +
+#   labs(y = "n especies",
+#        title = "National Responsibility Not Met",
+#        fill = "Conservation Type",
+#        color = "Conservation Type")+
+#   theme(
+#     axis.title.x = element_blank(),
+#     axis.text.x = element_text(angle = 25, vjust = 0.6),
+#   )
 
 
 ### -------------------------- Sparse Matrices --------------------------------

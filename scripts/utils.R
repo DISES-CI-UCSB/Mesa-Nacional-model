@@ -62,6 +62,11 @@ if (!file.exists(file.path(geo_dir, "template_terrestre.tif"))) {
   template_terra <- rast(file.path(geo_dir, "template_terrestre.tif"))
 }
 
+## Country outline for mapping
+mask <- as.numeric(template_terra)
+mask[mask > -1] <- 1
+outline <- as.polygons(mask); rm(mask)
+
 
 ## ------ Marine -----------------------------------
 ## Using marine ecosystems to generate template raster
@@ -101,6 +106,7 @@ template_combined <- rast(
   crs = my_crs
 )
 
+rm(combined_ext)
 
 # ========== FUNCTIONS ==============================================
 ## Create fxn to rasterize solution (outputs as matrix)

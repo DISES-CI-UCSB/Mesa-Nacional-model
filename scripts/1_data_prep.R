@@ -108,7 +108,7 @@ writeVector(omec_vect, file.path(geo_dir, "omecs_col.shp"), overwrite = TRUE)
 ## NOTE: for now, treating all categories the same. Can change later
 omec_r <- rasterize(omec_vect, template_combined)
 names(omec_r) <- "OMEC"
-writeRaster(omec_r, file.path(temp_dir, "omec.tif"), overwrite = TRUE)
+writeRaster(omec_r, file.path(geo_dir, "omec.tif"), overwrite = TRUE)
 
 ## Save as matrix
 omec_v <- as.matrix(omec_r)
@@ -263,7 +263,7 @@ ecosys_r <- ecosys_sf %>%
 
 ## Save the intermediate raster and biome code df
 writeRaster(ecosys_r, file.path(geo_dir, "ecosistemas_IAVH_2024.tif"), overwrite = TRUE)
-write_csv(ecosys_df, file.path(temp_dir, "ecosistemas_IDs_IAVH_2024.csv"))
+write_csv(ecosys_df, file.path(geo_dir, "ecosistemas_IDs_IAVH_2024.csv"))
 
 
 ## Some ecosystems won't be evaluated (outside PUs -- defined by IHEH2022)
@@ -302,38 +302,12 @@ saveRDS(ecosys_mat, file.path(ipt_dir, "ecosistemas_IAVH_2024.rds"))
 ecosys_mat <- readRDS(file.path(ipt_dir, "ecosistemas_IAVH_2024.rds"))
 ids <- cells(template_terra)
 
-ecosys_mat <- ecosys_mat[ids, ]
-ecosys_mat[is.na(ecosys_mat)] <- 0
+## Run function to determine which terrestrial ecosystems have already met targets.
+eco_terra_filtered <- ecosys_coverage(ecosys_mat, ids, "terrestrial")
 
-runap <- readRDS(file.path(ipt_dir, "runap.rds"))[ids, ] == 1
-runap[is.na(runap)] <- FALSE
-
-omec <- readRDS(file.path(ipt_dir, "omec.rds"))[ids, ] == 1
-omec[is.na(omec)] <- FALSE
-
-locked_runap <- runap
-locked_runap_omec <- runap | omec
-
-
-## Build summary dataframe
-ecosys_summary <- data.frame(
-  feature = colnames(ecosys_mat),
-  total_cells = colSums(ecosys_mat),
-  pct_runap = colSums(ecosys_mat[locked_runap, ]) / colSums(ecosys_mat) * 100,
-  pct_runap_omec = colSums(ecosys_mat[locked_runap_omec, ]) / colSums(ecosys_mat) * 100
-) %>%
-  mutate(
-    meets_17_runap = pct_runap >= 17,
-    meets_30_runap = pct_runap >= 30,
-    meets_17_runap_omec = pct_runap_omec >= 17,
-    meets_30_runap_omec = pct_runap_omec >= 30
-  )
-rownames(ecosys_summary) <- NULL
-
-## Save for reference
-write_csv(ecosys_summary, file.path(temp_dir, "ecosystem_coverage.csv"))
-
-# ## Visualize size of ecosystems
+## Read in intermediate fxn product to visualize ecosystems size if useful
+# ecosys_summary <- read_csv(file.path(temp_dir, "terrestrial_ecosystem_coverage.csv"))
+# 
 # ggplot(ecosys_summary, aes (x = total_cells)) +
 #   geom_histogram(bins = 30, color = "black", fill = "steelblue") +
 #   theme_minimal() +
@@ -347,59 +321,57 @@ write_csv(ecosys_summary, file.path(temp_dir, "ecosystem_coverage.csv"))
 #        y = "Number of Ecosystems")
 
 
-## Now make one in tidy format so we can filter matrix in main script
-targets <- c(17, 30)
-conservation_types <- c("RUNAP", "OMEC")
-combos <- expand_grid(target = targets, 
-                      conservation_type = conservation_types)
-
-## Fxn to filter ecosystems
-filter_ecos <- function(target, conservation_type) {
-  pct_col <- if (conservation_type == "RUNAP") "pct_runap" else "pct_runap_omec"
-  
-  ecosys_summary %>%
-    # Remove ecosystems already meeting the target
-    filter(.data[[pct_col]] < target) %>%
-    mutate(
-      targets = target,
-      conservation_type = conservation_type
-    )
-}
-
-## Return tidy df using fxn
-ecosys_filtered_df <- map2_dfr(combos$target, combos$conservation_type, filter_ecos) %>%  
-  select(!c(meets_17_runap:meets_30_runap_omec))
-
-## Save dataframe for use in main prioritizr script
-write_csv(ecosys_filtered_df, file.path(ipt_dir, "ecosys_filtered.csv"))
-
-
 ###----------------------------- Marine ---------------------------------------
-# Follow same approach as terrestrial ecosystems.
+# The shapefile is already rasterized and saved in `utils.R`
+# So just read that in and create sparse matrix. 
 
-## Read in shapefile
-ecosys_mar_sf <- read_sf(
-  dsn = file.path(features, "Union_Profundo_Somero/Union_Profundo_Somero.shp")) %>% 
-  st_transform(crs(template_mar)) 
+## Get raster
+ecosys_mar_r <- rast(file.path(geo_dir, "ecosistemas_marinos.tif"))
 
-## Get "code list" of marine biomes
-## As directed, using the "consolidated" attribute
-ecosys_mar_df <- data.frame(
-  biome = unique(ecosys_mar_sf$Consolidad)) %>%  
-  mutate(biome_id = seq_len(nrow(.)))
+## Read in dataframe of biome ids
+ecosys_mar_df <- read_csv(file.path(geo_dir, "ecosistemas_IDs_marinos.csv"))
 
-## Add biome codes to shapefile, then rasterize
-ecosys_mar_r <- ecosys_mar_sf %>% 
-  left_join(ecosys_mar_df, join_by("Consolidad" == "biome")) %>% 
-  vect() %>%         # make terra obj
-  rasterize(template_mar, field = "biome_id") %>% 
-  mask(template_mar) 
+## Convert raster in to df of values
+vals <- as.data.frame(ecosys_mar_r, cells = TRUE, na.rm = TRUE)
 
-## Save the intermediate raster and biome code df
-writeRaster(ecosys_mar_r, 
-            file.path(geo_dir, "ecosistemas_marinos.tif"), 
-            overwrite = TRUE)
-write_csv(ecosys_mar_df, file.path(temp_dir, "ecosistemas_IDs_marinos.csv"))
+## Create sparse matrix
+ecosys_mar_mat <- sparseMatrix(
+  i = vals$cell,                # each row = raster cell
+  j = vals$ecosistemas_marino,  # each column = ecosystem
+  x = 1,
+  dims = c(ncell(ecosys_mar_r), nrow(ecosys_mar_df)),
+  dimnames = list(
+    NULL,
+    ecosys_mar_df$biome
+  )
+)
+
+## Save
+saveRDS(ecosys_mar_mat, file.path(ipt_dir, "ecosistemas_marinos.rds"))
+
+
+## How many ecosystems already are meeting targets under RUNAP and OMEC?
+ecosys_mar_mat <- readRDS(file.path(ipt_dir, "ecosistemas_marinos.rds"))
+ids <- cells(template_mar)  # which cells are PUs for marine model?
+
+## Run function to determine which marine ecosystems have already met goals.
+## Automatically saves tidy df in input_dir, but can store as object here to visualize
+eco_mar_filtered <- ecosys_coverage(ecosys_mar_mat, ids, "marine")
+
+## Read in intermediate fxn product to visualize ecosystems size if useful
+# ecosys_summary <- read_csv(file.path(temp_dir, "marine_ecosystem_coverage.csv"))
+# 
+# ggplot(ecosys_summary, aes (x = total_cells)) +
+#   geom_histogram(bins = 30, color = "black", fill = "steelblue") +
+#   theme_minimal() +
+#   stat_bin(
+#     bins = 30,
+#     geom = "text",
+#     aes(label = after_stat(count)),
+#     vjust = -0.5
+#   )+
+#   labs(x = "Ecosystem Area (km2)",
+#        y = "Number of Ecosystems")
 
 
 ##------------------------------ BioModelos -----------------------------------

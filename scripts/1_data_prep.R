@@ -211,17 +211,13 @@ saveRDS(strat_ecos_ter_v, file.path(ipt_dir, "ecosistemas_estrategicos_terrestre
 ###----------------------------- Marine ---------------------------------------
 # NOTE: adding coral and seagrass to this once we get data
 
-# #### Mangroves
-# manglares_r <- read_sf(
-#   file.path(features, "MANGLARES_COLOMBIA/MANGLARES_COLOMBIA.shp")) %>% 
-#   st_transform(crs(template_combined)) %>% 
-#   vect() %>% 
-#   rasterize(., template_combined)
-# 
-# writeRaster(manglares_r, file.path(geo_dir, "mangroves.tif"), overwrite = TRUE)
+#### Mangroves ---------------------------------------
+# Already rasterized and saved in `utils.R`, so just make a matrix
+# manglares_r <- rast(file.path(geo_dir, "manglares.tif"))
 # 
 # manglares_v <- as.matrix(manglares_r)
 # manglares_v[is.na(manglares_v)] <- 0
+# 
 # 
 # #### Corales
 # 

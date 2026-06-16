@@ -219,6 +219,74 @@ get_freq <- function(freq_df, val) {
 }
 
 
+## Get summary coverage stats for ecosystems
+ecosys_coverage <- function(ecosys_m, ids, ecosys_type) {
+  ## Only eval cells in PUs
+  ecosys_m <- ecosys_m[ids, ]
+  ecosys_m[is.na(ecosys_m)] <- 0
+  
+  ## Read in RUNAP and OMEC matrices
+  runap <- readRDS(file.path(ipt_dir, "runap.rds"))[ids, ] == 1
+  runap[is.na(runap)] <- FALSE
+  
+  omec <- readRDS(file.path(ipt_dir, "omec.rds"))[ids, ] == 1
+  omec[is.na(omec)] <- FALSE
+  
+  ## Define locked in areas for both conservation scenarios
+  locked_runap <- runap
+  locked_runap_omec <- runap | omec
+  
+  ## Build summary dataframe
+  ecosys_summary <- data.frame(
+    feature = colnames(ecosys_m),
+    total_cells = colSums(ecosys_m),
+    pct_runap = colSums(ecosys_m[locked_runap, ]) / colSums(ecosys_m) * 100,
+    pct_runap_omec = colSums(ecosys_m[locked_runap_omec, ]) / colSums(ecosys_m) * 100
+  ) %>%
+    mutate(
+      meets_17_runap = pct_runap >= 17,
+      meets_30_runap = pct_runap >= 30,
+      meets_17_runap_omec = pct_runap_omec >= 17,
+      meets_30_runap_omec = pct_runap_omec >= 30
+    )
+  rownames(ecosys_summary) <- NULL
+  
+  ## Save for reference
+  write_csv(ecosys_summary, 
+            file.path(temp_dir, paste0(ecosys_type, "_ecosystem_coverage.csv")))
+  
+  
+  ## Now make one in tidy format so we can filter matrix in main script
+  targets <- c(17, 30)
+  conservation_types <- c("RUNAP", "OMEC")
+  combos <- expand_grid(target = targets, 
+                        conservation_type = conservation_types)
+  
+  ## Fxn to filter ecosystems
+  filter_ecos <- function(target, conservation_type) {
+    pct_col <- if (conservation_type == "RUNAP") "pct_runap" else "pct_runap_omec"
+    
+    ecosys_summary %>%
+      # Remove ecosystems already meeting the target
+      filter(.data[[pct_col]] < target) %>%
+      mutate(
+        targets = target,
+        conservation_type = conservation_type
+      )
+  }
+  
+  ## Return tidy df
+  ecosys_filtered_df <- map2_dfr(combos$target, combos$conservation_type, filter_ecos) %>%  
+    select(!c(meets_17_runap:meets_30_runap_omec))
+  
+  ## Save dataframe for use in main prioritizr script
+  write_csv(ecosys_filtered_df, 
+            file.path(ipt_dir, paste0(ecosys_type, "_ecosys_filtered.csv")))
+  
+  ## Return tidy df if useful to examine
+  return(ecosys_filtered_df)
+}
+
 
 # ========== MODEL SCENARIOS =================================================
 # Create a dataframe with all model scenario permutations

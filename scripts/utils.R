@@ -26,15 +26,18 @@ for (dir in c(temp_dir, geo_dir, ipt_dir)){
 my_crs <- "EPSG:9377"
 
 ## ------ Terrestrial -------------------------------------------
-## Use Humboldt-produced raster as base for terrestrial Colombian extent. 
-## In a geodatabase, so find the correct layer (IHEH 2022)
+# Use Humboldt-produced raster as base for terrestrial Colombian extent. 
+# This is how planning units will be defined for the terrestrial model runs.
+
+## Data in a geodatabase, so first find the correct layer (IHEH 2022)
 # info <- describe("data/costs/HEH_2022.gdb")
 # print(info)
 
 
-## If template hasn't yet been created, run this code. 
-## Otherwise, save time and read in existing layer
+## If the template hasn't yet been created, then it will be. 
+## Otherwise, save time and read in the existing template
 if (!file.exists(file.path(geo_dir, "template_terrestre.tif"))) {
+  ## Open raster from geodatabase
   iheh_r <- rast('OpenFileGDB:"data/costs/HEH_2022.gdb":IHEH') %>% 
     ## First put into CRS of interest, mostly preserving native resolution
     project(., my_crs, method = "bilinear") %>%
@@ -47,10 +50,10 @@ if (!file.exists(file.path(geo_dir, "template_terrestre.tif"))) {
     ## Finally, make sure it's exactly 1km resolution
     project(., my_crs, method = "bilinear", res = 1000)
   
-  ## Save template raster as updated IHEH2022
+  ## Save raster as one of the model costs (IHEH2022)
   writeRaster(iheh_r, file.path(geo_dir, "IHEH_2022.tif"), overwrite = TRUE)
   
-  ## Also save as terrestrial template of one value
+  ## Save terrestrial template as binary version
   template_terra <- iheh_r
   template_terra[!is.na(template_terra)] <- 1
   names(template_terra) <- "template_terrestre"
@@ -69,30 +72,102 @@ outline <- as.polygons(mask); rm(mask)
 
 
 ## ------ Marine -----------------------------------
-## Using marine ecosystems to generate template raster
+# Using marine ecosystems to generate template raster. 
+# Same as terrestrial, this will define the PUs for marine prioritization runs.
+
+## Only run all this code if needed (the first time)
 if (!file.exists(file.path(geo_dir, "template_marino.tif"))) {
-  mar_v <- vect(here("data/features/Union_Profundo_Somero/Union_Profundo_Somero.shp")) %>% 
-    project(., my_crs)
+  ## Read in shapefile
+  mar_sf <- read_sf(
+    dsn = file.path("data/features", 
+                    "Union_Profundo_Somero/Union_Profundo_Somero.shp")) %>% 
+    st_transform(my_crs) 
   
+  ## Get "code list" of marine biomes, then update shapefile with attribute
+  ## As directed, using the "consolidated" attribute
+  mar_df <- data.frame(
+    biome = unique(mar_sf$Consolidad)) %>%  
+    mutate(biome_id = seq_len(nrow(.)))
+  
+  mar_sf <- left_join(mar_sf, mar_df, join_by("Consolidad" == "biome"))
+  
+  ## Create initial marine template
   mar_r <- rast(
-    ext(mar_v),
+    ext(mar_sf),
     resolution = 1000,
-    crs = my_crs)
+    crs = my_crs
+  )
   
-  ## Just create template for now, marine ecosys layer fully processed later in 1_data_prep.R
-  template_mar <- rasterize(mar_v, mar_r)
+  template_mar <- rasterize(vect(mar_sf), mar_r)
+  
+  ## Use template to rasterize marine ecosystems
+  ecosys_mar_r <- mar_sf %>% 
+    vect() %>%    
+    rasterize(template_mar, field = "biome_id") %>% 
+    mask(template_mar)
+  
+  ## Some small ecosystems are lost during rasterization process. 
+  ## If we want to force these to be included (even if one pixel), can identify and include below. 
+  present <- unique(na.omit(values(ecosys_mar_r)))
+  missing_ids <- setdiff(mar_df$biome_id, present) # 4 biomes get lost
+  
+  ## Fix raster to include additional pixels of missing biomes (if needed)
+  if (length(missing_ids) > 0) {
+    message("Patching ", length(missing_ids)," missing biome(s): ",
+            paste(missing_ids, collapse = ", "))
+    
+    ## For each missing biome, find its largest polygon and use its centroid
+    missing_patches <- mar_sf %>%
+      filter(biome_id %in% missing_ids) %>%
+      group_by(biome_id) %>%
+      slice_max(st_area(geometry), n = 1, with_ties = FALSE) %>%  # largest polygon per biome
+      ungroup() %>%
+      st_centroid() %>%  # centroid of that polygon
+      vect()
+    
+    ## Stamp each centroid into the raster (overwrites whatever was there)
+    ecosys_mar_r <- rasterize(missing_patches,
+                              ecosys_mar_r,
+                              field = "biome_id",
+                              update = TRUE)  # preserves existing values
+    names(ecosys_mar_r) <- "ecosistemas_marino"
+    
+    ## Verify all biomes now present
+    final_ids <- unique(na.omit(values(ecosys_mar_r)))
+    still_missing <- setdiff(mar_df$biome_id, final_ids)
+    
+    message("Now missing ", length(still_missing), " biomes(s).")
+  }
+  
+  ## Finally, update marine template to include these additional pixels
+  template_mar <- ecosys_mar_r
+  template_mar[!is.na(template_mar)] <- 1  # all one value
   names(template_mar) <- "template_marino"
-  writeRaster(template_mar, 
-              file.path(geo_dir, "template_marino.tif"), 
+  
+  ## Save the template, marine ecosystems raster, and marine IDs CSV
+  writeRaster(template_mar,
+              file.path(geo_dir, "template_marino.tif"),
               overwrite = TRUE)
+  writeRaster(ecosys_mar_r, 
+              file.path(geo_dir, "ecosistemas_marinos.tif"), 
+              overwrite = TRUE)
+  write_csv(mar_df, file.path(geo_dir, "ecosistemas_IDs_marinos.csv"))
+  
+  ## Remove all the extra variables from environment
+  rm(present, missing_ids, final_ids, still_missing, missing_patches, 
+     mar_df, mar_r, mar_sf, ecosys_mar_r)
+  
+  
 } else {
   template_mar <- rast(file.path(geo_dir, "template_marino.tif"))
-  
 }
 
 ## ------ Combined template -----------------------------------
-## Combined template doesn't have values, since it will not be used
-## to generate PUs for models. Just used for PAs and OMECs
+# The combined template is empty (no values), since it is not used to define
+# planning units for the model. It is currently only used for data spanning
+# both marine and terrestrial (e.g. RUNAP and OMECs)
+
+## Get the combined extent from marine and terrestrial templates
 combined_ext <- ext(
   min(xmin(template_terra), xmin(template_mar)), # xmin
   max(xmax(template_terra), xmax(template_mar)), # xmax
@@ -100,6 +175,7 @@ combined_ext <- ext(
   max(ymax(template_terra), ymax(template_mar))  # ymax
 )
 
+## Generate the empty raster and correct resolution and CRS
 template_combined <- rast(
   ext = combined_ext,
   resolution = 1000,
@@ -108,27 +184,27 @@ template_combined <- rast(
 
 rm(combined_ext)
 
+
+
 # ========== FUNCTIONS ==============================================
 ## Create fxn to rasterize solution (outputs as matrix)
 rasterize_soln <- function(s, template, locked_in, ids) {
-  # Create output raster from template
+  ## Create output raster from template (either marine or terrestrial)
   rast <- template
   rast[] <- NA
   
-  # Assign solution values to planning unit cells
+  ## Assign solution values to planning unit cells
   rast[ids] <- s
   
-  # Mark existing PAs (locked-in units that were selected)
-  # 1 = new cells selected; 2 = existing PA; NA = not selected
+  ## Mark existing conservation (locked-in planning units)
+  ## 1 = new cells selected; 2 = existing conservation; NA = not selected
   rast[ids[which(locked_in == 1)]] <- 2
+  rast[rast == 0] <- NA   # Set 0s to NA (not selected)
   
-  # Set 0s to NA (not selected)
-  rast[rast == 0] <- NA
-  
-  # Add category labels
+  ## Add category labels
   levels(rast) <- data.frame(
     value = 1:2,
-    layer = c("Priority area", 
+    layer = c("Priority area",  # NOTE: can change these later if needed
               "Locked in")
   )
   
@@ -146,6 +222,8 @@ get_freq <- function(freq_df, val) {
 
 # ========== MODEL SCENARIOS =================================================
 # Create a dataframe with all model scenario permutations
+# NOTE: this will likely be replaced by pre-created dataframe provided by the Mesa.
+
 ## Fxn to create combos
 get_combos <- function(x, min_size = 1) {
   unlist(

@@ -72,11 +72,12 @@ outline <- as.polygons(mask); rm(mask)
 
 
 ## ------ Marine -----------------------------------
-# Using marine ecosystems to generate template raster. 
+# Using marine ecosystems and mangroves to generate template raster. 
 # Same as terrestrial, this will define the PUs for marine prioritization runs.
 
 ## Only run all this code if needed (the first time)
 if (!file.exists(file.path(geo_dir, "template_marino.tif"))) {
+  ### 1. Start with ecosystems -----------------------------------
   ## Read in shapefile
   mar_sf <- read_sf(
     dsn = file.path("data/features", 
@@ -139,23 +140,42 @@ if (!file.exists(file.path(geo_dir, "template_marino.tif"))) {
     message("Now missing ", length(still_missing), " biomes(s).")
   }
   
-  ## Finally, update marine template to include these additional pixels
+  ## Update marine template to include these additional pixels
   template_mar <- ecosys_mar_r
-  template_mar[!is.na(template_mar)] <- 1  # all one value
-  names(template_mar) <- "template_marino"
   
-  ## Save the template, marine ecosystems raster, and marine IDs CSV
-  writeRaster(template_mar,
-              file.path(geo_dir, "template_marino.tif"),
-              overwrite = TRUE)
+  ## Save the marine ecosystems raster, and marine IDs CSV
   writeRaster(ecosys_mar_r, 
               file.path(geo_dir, "ecosistemas_marinos.tif"), 
               overwrite = TRUE)
   write_csv(mar_df, file.path(geo_dir, "ecosistemas_IDs_marinos.csv"))
   
+  
+  ### 2. Add in Mangroves -----------------------------------
+  ## Read in shapefile and rasterize using existing template
+  manglares_r <- read_sf(
+    file.path("data/features/MANGLARES_COLOMBIA/MANGLARES_COLOMBIA.shp")) %>%
+    st_transform(crs(template_mar)) %>%
+    vect() %>%
+    rasterize(., template_mar)
+  
+  
+  ## Add pixels with values to marine template, then make all values of 1
+  template_mar <- cover(template_mar, manglares_r)
+  template_mar[!is.na(template_mar)] <- 1  # all one value
+  names(template_mar) <- "template_marino"
+  
+  ## Save final template and mangroves raster
+  writeRaster(template_mar,
+              file.path(geo_dir, "template_marino.tif"),
+              overwrite = TRUE)
+  writeRaster(manglares_r, 
+              file.path(geo_dir, "manglares.tif"), 
+              overwrite = TRUE)
+  
+  
   ## Remove all the extra variables from environment
   rm(present, missing_ids, final_ids, still_missing, missing_patches, 
-     mar_df, mar_r, mar_sf, ecosys_mar_r)
+     mar_df, mar_r, mar_sf, ecosys_mar_r, manglares_r)
   
   
 } else {

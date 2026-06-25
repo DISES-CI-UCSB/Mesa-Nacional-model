@@ -256,7 +256,11 @@ get_freq <- function(freq_df, val) {
 
 
 ## Get summary coverage stats for ecosystems
-ecosys_coverage <- function(ecosys_m, ids, ecosys_type) {
+ecosys_coverage <- function(ecosys_m,            # ecosystem matrix
+                            targets = c(17, 30), # list of targets (defaults to 17% and 30%)
+                            ids,                 # list of cells that are PUs
+                            ecosys_type          # terrestrial or marine (string)
+                            ) { 
   ## Only eval cells in PUs
   ecosys_m <- ecosys_m[ids, ]
   ecosys_m[is.na(ecosys_m)] <- 0
@@ -278,23 +282,23 @@ ecosys_coverage <- function(ecosys_m, ids, ecosys_type) {
     total_cells = colSums(ecosys_m),
     pct_runap = colSums(ecosys_m[locked_runap, ]) / colSums(ecosys_m) * 100,
     pct_runap_omec = colSums(ecosys_m[locked_runap_omec, ]) / colSums(ecosys_m) * 100
-  ) %>%
-    mutate(
-      meets_17_runap = pct_runap >= 17,
-      meets_30_runap = pct_runap >= 30,
-      meets_17_runap_omec = pct_runap_omec >= 17,
-      meets_30_runap_omec = pct_runap_omec >= 30
-    )
-  rownames(ecosys_summary) <- NULL
+  ) 
+  
+  ## Dynamically add targets information to df
+  for (t in targets) {
+    ecosys_summary[[paste0("meets_", t, "_runap")]] <- ecosys_summary$pct_runap >= t
+    ecosys_summary[[paste0("meets_", t, "_runap_omec")]] <- ecosys_summary$pct_runap_omec >= t
+  }
+  
+  rownames(ecosys_summary) <- NULL # fix row names
   
   ## Save for reference
-  write_csv(ecosys_summary, 
+  write_excel_csv(ecosys_summary, 
             file.path(temp_dir, paste0(ecosys_type, "_ecosystem_coverage.csv")))
   
   
   ## Now make one in tidy format so we can filter matrix in main script
-  targets <- c(17, 30)
-  conservation_types <- c("RUNAP", "OMEC")
+  conservation_types <- c("RUNAP", "RUNAP_OMEC")
   combos <- expand_grid(target = targets, 
                         conservation_type = conservation_types)
   
@@ -311,15 +315,18 @@ ecosys_coverage <- function(ecosys_m, ids, ecosys_type) {
       )
   }
   
-  ## Return tidy df
-  ecosys_filtered_df <- map2_dfr(combos$target, combos$conservation_type, filter_ecos) %>%  
-    select(!c(meets_17_runap:meets_30_runap_omec))
+  ## Drop all dynamically-created meets_* columns before returning
+  meets_cols <- grep("^meets_", names(ecosys_summary), value = TRUE)
+  
+  ## Return tidy dataframe
+  ecosys_filtered_df <- map2_dfr(combos$target, combos$conservation_type, filter_ecos) %>%
+    select(-any_of(meets_cols))
   
   ## Save dataframe for use in main prioritizr script
-  write_csv(ecosys_filtered_df, 
+  write_excel_csv(ecosys_filtered_df, 
             file.path(ipt_dir, paste0(ecosys_type, "_ecosys_filtered.csv")))
   
-  ## Return tidy df if useful to examine
+  ## Return df if useful to examine or visualize
   return(ecosys_filtered_df)
 }
 

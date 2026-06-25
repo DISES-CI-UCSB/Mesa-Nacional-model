@@ -72,11 +72,13 @@ outline <- as.polygons(mask); rm(mask)
 
 
 ## ------ Marine -----------------------------------
-# Using marine ecosystems and mangroves to generate template raster. 
-# Same as terrestrial, this will define the PUs for marine prioritization runs.
+# Use marine ecosystems, mangroves, and marine human footprint
+# to generate a template raster (that makes sure all PUs have a cost).
+# Same as terrestrial, this template will define the PUs for marine model.
 
 ## Only run all this code if needed (the first time)
 if (!file.exists(file.path(geo_dir, "template_marino.tif"))) {
+  
   ### 1. Start with ecosystems -----------------------------------
   ## Read in shapefile
   mar_sf <- read_sf(
@@ -150,33 +152,47 @@ if (!file.exists(file.path(geo_dir, "template_marino.tif"))) {
   write_csv(mar_df, file.path(geo_dir, "ecosistemas_IDs_marinos.csv"))
   
   
-  ### 2. Add in Mangroves -----------------------------------
+  ## 2. Add in Mangroves -----------------------------------
   ## Read in shapefile and rasterize using existing template
   manglares_r <- read_sf(
     file.path("data/features/MANGLARES_COLOMBIA/MANGLARES_COLOMBIA.shp")) %>%
     st_transform(crs(template_mar)) %>%
     vect() %>%
     rasterize(., template_mar)
-  
+  names(manglares_r) <- "manglares"
   
   ## Add pixels with values to marine template, then make all values of 1
   template_mar <- cover(template_mar, manglares_r)
   template_mar[!is.na(template_mar)] <- 1  # all one value
   names(template_mar) <- "template_marino"
   
-  ## Save final template and mangroves raster
-  writeRaster(template_mar,
-              file.path(geo_dir, "template_marino.tif"),
-              overwrite = TRUE)
+  ## Save mangroves raster
   writeRaster(manglares_r, 
               file.path(geo_dir, "manglares.tif"), 
               overwrite = TRUE)
   
   
+  ## 3. Mask by cost (marine footprint) -----------------------------------
+  # The model cannot evaluate cells with no cost. Therefore, need to make sure
+  # the final marine template doesn't extend beyond marine footprint raster. 
+  
+  ## Read in raster and match CRS and resolution of template
+  hm_r <- rast(here("data/costs/total 2.tif")) %>% 
+    project(., my_crs, method = "bilinear") %>% 
+    resample(., template_mar, method = "bilinear")
+  
+  ## Remove template cells with no cost value
+  template_mar <- mask(template_mar, hm_r)
+  
+  ## Save final marine template
+  writeRaster(template_mar,
+              file.path(geo_dir, "template_marino.tif"),
+              overwrite = TRUE)
+  
+  
   ## Remove all the extra variables from environment
   rm(present, missing_ids, final_ids, still_missing, missing_patches, 
-     mar_df, mar_r, mar_sf, ecosys_mar_r, manglares_r)
-  
+     mar_df, mar_r, mar_sf, ecosys_mar_r, manglares_r, hm_r)
   
 } else {
   template_mar <- rast(file.path(geo_dir, "template_marino.tif"))

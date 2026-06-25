@@ -34,7 +34,8 @@ source(here("scripts/utils.R"))
 costs <- here("data/costs")
 includes <- here("data/includes")
 
-## Human footprint ---------------------------------------
+## Human footprint ---------------------------------------------------
+### Terrestrial -------------------
 ## IHEH 2022 was used as template, so just vectorize and save
 iheh_v <- as.matrix(template_terra)
 iheh_v[is.na(iheh_v)] <- 0
@@ -64,11 +65,34 @@ iheh_2030_v[is.na(iheh_2030_v)] <- 0
 saveRDS(iheh_2030_v, file.path(ipt_dir, "IHEH_2030.rds"))
 
 
-## Agricultural rent
-## NOTE: this isn't the correct, normalized layer??
-# renta_ag_r <- rast(here("data/costs/net_benefit.tif")) %>% 
-#   resample(template, method = "bilinear")
+### Marine --------------------------------
+# Any cells that overlap with terrestrial IHEH, replace with those values.
+# NOTE: Requested to do this, but may skew results for mangroves...
 
+## Read in marine human footprint data and match CRS and resolution of template
+hm_r <- rast(file.path(costs, "total 2.tif")) %>% 
+  project(., my_crs, "bilinear") %>% 
+  resample(template_mar, "bilinear")
+
+## Read in terrestrial IHEH and match to marine extent
+iheh_r <- rast(file.path(geo_dir, "IHEH_2022.tif")) %>% 
+  resample(., template_mar)
+
+## Return values of IHEH where they overlap
+hm_cover_r <- mosaic(hm_r, iheh_r, fun = "last") %>% 
+  mask(hm_r)  # Remove excess terrestrial portion
+
+## Save raster output
+writeRaster(hm_cover_r, 
+            file.path(geo_dir, "huella_humana_marina.tif"),
+            overwrite = TRUE)
+
+## Convert to matrix and save
+hm_v <- as.matrix(hm_cover_r)
+hm_v[is.na(hm_v)] <- 0
+saveRDS(hm_v, file.path(ipt_dir, "huella_humana_marina.rds"))
+
+rm(iheh_r, hm_cover_r, hm_r)
 
 ## RUNAP ---------------------------------------
 runap_vect <- vect(file.path(includes, "RUNAP/runap.shp")) %>% 
@@ -209,28 +233,17 @@ saveRDS(strat_ecos_ter_v, file.path(ipt_dir, "ecosistemas_estrategicos_terrestre
 
 
 ###----------------------------- Marine ---------------------------------------
-# NOTE: adding coral and seagrass to this once we get data
+# NOTE: In future, may have coral and sea grass also. 
+# If so, aggregate into one matrix using same approach as terrestrial above
 
 #### Mangroves ---------------------------------------
 # Already rasterized and saved in `utils.R`, so just make a matrix
-# manglares_r <- rast(file.path(geo_dir, "manglares.tif"))
-# 
-# manglares_v <- as.matrix(manglares_r)
-# manglares_v[is.na(manglares_v)] <- 0
-# 
-# 
-# #### Corales
-# 
-# 
-# #### Sea grass
-# 
-# 
-# 
-# ## Now combine marine strategic ecosystems to one matrix
-# strat_ecos_mar_v <- cbind(manglares_v, corales_v, aq_pastos_v)
-# strat_ecos_mar_v <- as(strat_ecos_mar_v, "dgCMatrix")
-# saveRDS(strat_ecos_mar_v, file.path(ipt_dir, "ecosistemas_estrategicos_marinos.rds"))
+manglares_r <- rast(file.path(geo_dir, "manglares.tif"))
 
+manglares_v <- as.matrix(manglares_r)
+manglares_v[is.na(manglares_v)] <- 0
+
+saveRDS(manglares_v, file.path(ipt_dir, "manglares.rds"))
 
 
 ##------------------------------- Ecosystems -----------------------------------
@@ -299,7 +312,9 @@ ecosys_mat <- readRDS(file.path(ipt_dir, "ecosistemas_IAVH_2024.rds"))
 ids <- cells(template_terra)
 
 ## Run function to determine which terrestrial ecosystems have already met targets.
-eco_terra_filtered <- ecosys_coverage(ecosys_mat, ids, "terrestrial")
+eco_terra_filtered <- ecosys_coverage(ecosys_mat,
+                                      targets = c(17, 30),
+                                      ids, "terrestrial")
 
 ## Read in intermediate fxn product to visualize ecosystems size if useful
 # ecosys_summary <- read_csv(file.path(temp_dir, "terrestrial_ecosystem_coverage.csv"))
@@ -352,7 +367,10 @@ ids <- cells(template_mar)  # which cells are PUs for marine model?
 
 ## Run function to determine which marine ecosystems have already met goals.
 ## Automatically saves tidy df in input_dir, but can store as object here to visualize
-eco_mar_filtered <- ecosys_coverage(ecosys_mar_mat, ids, "marine")
+eco_mar_filtered <- ecosys_coverage(ecosys_mar_mat, 
+                                    targets = c(30, 50), 
+                                    ids, "marine")
+
 
 ## Read in intermediate fxn product to visualize ecosystems size if useful
 # ecosys_summary <- read_csv(file.path(temp_dir, "marine_ecosystem_coverage.csv"))
@@ -538,15 +556,25 @@ spp_ranges_updated_df <-
     scientific_name == "Syntheosciurus granatensis" ~ "LC", #Sciurus granatensis
     .default = updated_status
   )) %>% 
-  select(!c(iucn_status, threat_status_uicn, threat_status_mads)) %>% 
-  rename(iucn_status = updated_status) %>% 
-  ## Make endemic status binary
-  mutate(endemic = case_when(
-    is.na(endemic) ~ 0,  # 0 if not endemic
-    !is.na(endemic) ~ 1  # 1 if endemic
-  ))
+  ## Remove old IUCN status
+  select(!c(iucn_status, threat_status_uicn)) %>% 
+  ## Clean up some names
+  rename(iucn_status = updated_status,
+         mads_status = threat_status_mads) %>% 
+  mutate(
+    ## Make endemic status binary
+    endemic = case_when(
+      is.na(endemic) ~ 0,  # 0 if not endemic
+      !is.na(endemic) ~ 1  # 1 if endemic
+    ),
+    ## Combine threat statuses
+    threat_status = case_when(
+      !is.na(mads_status) ~ mads_status,  # Use national (MADS) status when available
+      .default = iucn_status),            # Where NA, use updated IUCN
+    .before = iucn_status
+    )
 
-## save intermediate output!
+## save intermediate output
 write_csv(spp_ranges_updated_df, file.path(temp_dir, "biomod_spp_ranges_updatedIUCN.csv"))
 
 
@@ -587,10 +615,10 @@ filter_spp_rep <- function(target, conservation_type) {
     ## 3: Remove species with range under 1km
     filter(range_km2 > 1) %>%
     ## 4: remove LC and NT species
-    filter(!iucn_status %in% c("LC", "NT")) %>%
+    filter(!threat_status %in% c("LC", "NT")) %>%
     ## At Elkin's sugggestion, remove fish for now
     ## NOTE: CHANGE THIS?? 
-    filter(class != "Actinopteri") %>% 
+    filter(class != "Actinopteri") %>%
     ## Tag rows with the scenario info
     mutate(
       targets = target,
@@ -609,53 +637,63 @@ spp_filtered_rep_df <- map2_dfr(combos$target, combos$conservation_type, filter_
   ))
 
 ## Save this df for filtering in prioritizr run script
-write_csv(spp_filtered_rep_df, file.path(ipt_dir, "biomod_spp_filtered_representivity.csv"))
+write_csv(spp_filtered_rep_df, file.path(ipt_dir, "biomod_spp_filtered_representatividad.csv"))
 
 
 ####---- National Responsibility --------------------------------
 # The other method for targets is national responsibility, which sets individual
 # species targets based on their range size, threatened status, and endemism.
 
-#NOTE: WILL UPDATE THESE SPECIFIC METHODS AFTER DISCUSSION WITH MESA NACIONAL
 spp_nr_df <- spp_ranges_updated_df %>% 
   ## Filter out any species with ranges of 0km2
   filter(range_km2 > 1) %>% 
   ## At Elkin's sugggestion, remove fish for now
   ## NOTE: CHANGE THIS?? 
   filter(class != "Actinopteri") %>% 
-  ## What if filter? 
-  # filter(range_pct_country >= 0.1) %>%
+  
+  ## Set min and max values for country percentage covered by range 
   mutate(
-    ## change pct to numbers
-    range_pct_country = range_pct_country/100,
-    ## Set min and max values for country percentage covered by range (NOTE: WHY????)
-    range_pct_country = pmin(pmax(range_pct_country, 0.001), 0.9),
-
+    range_pct_country_adjusted = pmin(pmax(range_pct_country, 0.1), 90),
+    .after = range_pct_country
+  ) %>% 
+  
+  ## Also set "floor" and "ceiling" for range values to match (NOTE: maybe change in future...)
+  mutate(
+    range_adjusted_km2 = pmin(pmax(range_km2, country_area_km2*0.001), country_area_km2*0.9),
+    .after = range_km2
+  ) %>% 
+  
+  mutate(
     ## Create weights based on threatened status (NOTE: for now using IUCN bc not enough national data)
     w_amenaza = case_when(
-      iucn_status == "CR" ~ 1.0,
-      iucn_status == "EN" ~ 0.78,
-      iucn_status == "VU" ~ 0.33,
-      iucn_status == "NT" ~ 0.14,
+      threat_status == "CR" ~ 1.0,
+      threat_status == "EN" ~ 0.78,
+      threat_status == "VU" ~ 0.33,
+      threat_status == "NT" ~ 0.14,
       .default = 0.05 # LC, LR, and DD 
     ),
     
     ## Get the max and min ranges across all species
-    min_range = min(range_km2, na.rm = TRUE),
-    max_range = max(range_km2, na.rm = TRUE),
+    min_range = min(range_adjusted_km2, na.rm = TRUE),
+    max_range = max(range_adjusted_km2, na.rm = TRUE),
     
     ## Determine "range effect" for each spp (NOTE: methods for this formula??)
-    range_effect = 1 - (log10(range_km2) - log10(min_range)) / (log10(max_range) - log10(min_range)), 
+    range_effect = 1 - (log10(range_adjusted_km2) - log10(min_range)) / (log10(max_range) - log10(min_range)), 
     range_effect = 0.1 + range_effect * 0.9,
     
     ## Finally, get the overall national responsibility 
     responsibility = case_when(
-      endemic == 1 ~ w_amenaza * range_effect,
-      endemic == 0 ~ w_amenaza * range_effect * (1 - range_pct_country)
+      endemic == 1 ~ (w_amenaza * range_effect),
+      endemic == 0 ~ (w_amenaza * range_effect * ((100 - range_pct_country_adjusted)/100))
     ),
     
     ## What is the area based target for each species?
+    ## [NOTE: Here we need to use REAL range (not adjusted), since
+    ## we can't have a target that is higher than the actually range]
     target = range_km2 * responsibility,
+    
+    ## Also cannot have target less than 1km2 (resolution of solution)
+    target = pmax(target, 1),
     
     ## So, which species already meet their target within existing conservation areas?
     target_met_runap = case_when(
@@ -669,84 +707,87 @@ spp_nr_df <- spp_ranges_updated_df %>%
     )
   )
 
+## Save
+write_csv(spp_nr_df, file.path(ipt_dir, "biomod_spp_responsiblidad_nacional.csv"))
+
 # ## Visualize responsibility spread
-# thres <- spp_nr_df %>% filter(responsibility <= 0.3) #Cut off long tail to visualize easier
-# 
-# ggplot(thres, aes(x = responsibility)) +
-#   geom_histogram(bins = 30, color = "black", fill = "steelblue4", alpha = 0.6) +
-#   theme_minimal()+
-#   stat_bin(
-#     bins = 30,
-#     geom = "text",
-#     size = 3.5,
-#     aes(label = after_stat(count)),
-#     vjust = -0.5
-#   ) +
-#   labs(
-#     x = "Responsibilidad",
-#     y = "n especies"
-#   )
-# 
-# ## How many spp met target? 
-# targets_met <- spp_nr_df %>% 
-#   pivot_longer(cols = target_met_runap:target_met_omec_runap, names_to = "conservation_type") %>% 
-#   group_by(conservation_type, value, class) %>% 
-#   summarize(n = n()) %>% 
-#   mutate(conservation_type = recode(conservation_type,
-#                                       "target_met_runap" = "RUNAP",
-#                                       "target_met_omec_runap"= "OMEC"),
-#          value = case_when(
-#            value == TRUE ~ "NR target met", 
-#            value == FALSE ~ "NR target not met"))
-# 
-# ggplot(targets_met, aes(x = class, y = n, fill = conservation_type)) +
-#   geom_col(position = "dodge", 
-#            alpha = 0.55, 
-#            linewidth = 1, 
-#            aes(color = conservation_type)) +
-#   facet_wrap(~value)+
-#   geom_text(
-#     aes(label = n),
-#     position = position_dodge(width = 0.9),
-#     vjust = -.8,
-#     color = "black",
-#     fontface = "bold",
-#     size = 3
-#   ) +
-#   theme_bw() +
-#   labs(y = "n especies",
-#        fill = "Conservation Type",
-#        color = "Conservation Type")+
-#   theme(
-#     axis.title.x = element_blank(),
-#     axis.text.x = element_text(angle = 25, vjust = 0.6),
-#   )
-# 
-# targets_met %>% 
-#   filter(value == "NR target not met") %>%
-# ggplot(aes(x = class, y = n, fill = conservation_type)) +
-#   geom_col(position = "dodge", 
-#            alpha = 0.55, 
-#            linewidth = 1, 
-#            aes(color = conservation_type)) +
-#   # facet_wrap(~value)+
-#   geom_text(
-#     aes(label = n),
-#     position = position_dodge(width = 0.9),
-#     vjust = -.8,
-#     color = "black",
-#     fontface = "bold",
-#     size = 3
-#   ) +
-#   theme_bw() +
-#   labs(y = "n especies",
-#        title = "National Responsibility Not Met",
-#        fill = "Conservation Type",
-#        color = "Conservation Type")+
-#   theme(
-#     axis.title.x = element_blank(),
-#     axis.text.x = element_text(angle = 25, vjust = 0.6),
-#   )
+thres <- spp_nr_df %>% filter(responsibility <= 0.3) #Cut off long tail to visualize easier
+
+ggplot(thres, aes(x = responsibility)) +
+  geom_histogram(bins = 30, color = "black", fill = "steelblue4", alpha = 0.6) +
+  theme_minimal()+
+  stat_bin(
+    bins = 30,
+    geom = "text",
+    size = 3.5,
+    aes(label = after_stat(count)),
+    vjust = -0.5
+  ) +
+  labs(
+    x = "Responsibilidad",
+    y = "n especies"
+  )
+
+## How many spp met target?
+targets_met <- spp_nr_df %>%
+  pivot_longer(cols = target_met_runap:target_met_omec_runap, names_to = "conservation_type") %>%
+  group_by(conservation_type, value, class) %>%
+  summarize(n = n()) %>%
+  mutate(conservation_type = recode(conservation_type,
+                                      "target_met_runap" = "RUNAP",
+                                      "target_met_omec_runap"= "OMEC"),
+         value = case_when(
+           value == TRUE ~ "NR target met",
+           value == FALSE ~ "NR target not met"))
+
+ggplot(targets_met, aes(x = class, y = n, fill = conservation_type)) +
+  geom_col(position = "dodge",
+           alpha = 0.55,
+           linewidth = 1,
+           aes(color = conservation_type)) +
+  facet_wrap(~value)+
+  geom_text(
+    aes(label = n),
+    position = position_dodge(width = 0.9),
+    vjust = -.8,
+    color = "black",
+    fontface = "bold",
+    size = 3
+  ) +
+  theme_bw() +
+  labs(y = "n especies",
+       fill = "Conservation Type",
+       color = "Conservation Type")+
+  theme(
+    axis.title.x = element_blank(),
+    axis.text.x = element_text(angle = 25, vjust = 0.6),
+  )
+
+targets_met %>%
+  filter(value == "NR target not met") %>%
+ggplot(aes(x = class, y = n, fill = conservation_type)) +
+  geom_col(position = "dodge",
+           alpha = 0.55,
+           linewidth = 1,
+           aes(color = conservation_type)) +
+  # facet_wrap(~value)+
+  geom_text(
+    aes(label = n),
+    position = position_dodge(width = 0.9),
+    vjust = -.8,
+    color = "black",
+    fontface = "bold",
+    size = 4
+  ) +
+  theme_bw() +
+  labs(y = "n especies",
+       title = "National Responsibility Not Met",
+       fill = "Conservation Type",
+       color = "Conservation Type")+
+  theme(
+    axis.title.x = element_blank(),
+    axis.text.x = element_text(angle = 25, vjust = 0.6),
+  )
 
 
 ### -------------------------- Sparse Matrices --------------------------------

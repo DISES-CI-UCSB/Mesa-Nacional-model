@@ -178,9 +178,86 @@ saveRDS(resguardos_v, file.path(ipt_dir, "resguardos.rds"))
 ## File path for all feature datasets
 features <- here("data/features")
 
+##-------------------------- Ecosystem Services --------------------------------
+### Carbon -----------------------------------
+# Data from Spawn et. al 2020. 
+# NOTE: Using prepped raster from Jaime. Need to figure out how this was created.
+
+carbono_r <- rast(file.path(features, "agb_plus_bgb_spawn_2020_fixed_1km.tif")) %>% 
+  project(., my_crs, method = "bilinear") %>%
+  resample(., template_terra, method = "bilinear")
+
+names(carbono_r) <- "carbono"
+
+## Save raster
+writeRaster(carbono_r, file.path(geo_dir, "carbono.tif"), overwrite = TRUE)
+
+## Turn into matrix
+carbono_v <- as.matrix(carbono_r)
+carbono_v[is.na(carbono_v)] <- 0
+
+### Freshwater -------------------------------
+# Data from IDEAM 2018 ENA. Already provided as categorical GeoTiff. 
+# Only want to evaluate "moderate" and "high" value areas in model. 
+# NOTE: check this is correct??
+
+## Read in raster
+agua_r <- rast(
+  file.path(
+    features,
+    "Zonas Potenciales de Recarga de Agua Subterraneas Ena2018",
+    "GeoTiff/ass_h_ena2018_rcg.tif"
+  ))
+
+## See full attribute table. Terra automatically loads "cantidad"
+# cats(agua_r)
+
+## We only want the categorical values ("vals")
+levels(agua_r) <- NULL
+
+## Reproject in our CRS
+agua_r <- project(agua_r, my_crs, method = "near")
+
+## Aggregate and resample to match 1km resolution
+fact <- floor(res(template_terra)[[1]]/res(agua_r)[[1]]) # Original is ~90m resolution
+
+agua_r <- aggregate(agua_r, fact, fun = "modal") %>% 
+  resample(., template_terra, method = "near")
+
+## Only keep moderate and high levels (vals 3 and 4)
+agua_binary_r <- classify(
+  agua_r, 
+  matrix(c(1, 0,  # muy bajo
+           2, 0,  # bajo
+           3, 1,  # moderado
+           4, 1), # alto
+         ncol = 2, byrow = TRUE))
+
+names(agua_binary_r) <- "agua_dulce"
+
+## Save rasters
+writeRaster(agua_r, 
+            file.path(temp_dir, "recarga_agua_subterranea.tif"), 
+            overwrite = TRUE)
+writeRaster(agua_binary_r,
+            file.path(geo_dir, "recarga_agua_subterranea_moderado_alto.tif"),
+            overwrite = TRUE)
+
+## Turn into matrix
+agua_v <- as.matrix(agua_binary_r)
+agua_v[is.na(agua_v)] <- 0
+
+
+
+## Compile all ecosystem services into one matrix and save
+ecosys_serv_v <- cbind(carbono_v, agua_v)
+ecosys_serv_v <- as(ecosys_serv_v, "dgCMatrix")
+saveRDS(ecosys_serv_v, file.path(ipt_dir, "servicios_ecosistemicos.rds"))
+
+
 ##------------------------- Strategic Ecosystems -------------------------------
 ###---------------------------- Terrestrial ------------------------------------
-#### Paramos ---------------------------------------
+#### Paramos -----------------------------------
 ## Rasterize shapefile
 paramos_r <- read_sf(
   dsn = file.path(features, "Paramos/Paramo_delimitado.shp")) %>%

@@ -49,6 +49,7 @@ if (!file.exists(file.path(geo_dir, "template_terrestre.tif"))) {
     ) %>% 
     ## Finally, make sure it's exactly 1km resolution
     project(., my_crs, method = "bilinear", res = 1000)
+  names(iheh_r) <- "IHEH_2022"
   
   ## Save raster as one of the model costs (IHEH2022)
   writeRaster(iheh_r, file.path(geo_dir, "IHEH_2022.tif"), overwrite = TRUE)
@@ -333,63 +334,129 @@ ecosys_coverage <- function(ecosys_m,            # ecosystem matrix
 
 # ========== MODEL SCENARIOS =================================================
 # Create a dataframe with all model scenario permutations
-# NOTE: this will likely be replaced by pre-created dataframe provided by the Mesa.
+# NOTE: For now, just using excel sheet provided by Mesa Nacional.
+# Once confirmed, may re-introduce this code so generating scenario lists 
+# doesn't need to be done manually in Excel.
 
-## Fxn to create combos
-get_combos <- function(x, min_size = 1) {
-  unlist(
-    lapply(min_size:length(x), function(k) combn(x, k, simplify = FALSE)),
-    recursive = FALSE
+scenarios_df <- 
+  ## Read in excel file from Mesa Nacional
+  read_excel(file.path(ipt_dir, "corridas_05062026.xlsx"), 
+             sheet = "Hoja1", skip = 1) %>% 
+  janitor::clean_names() %>% 
+  rename(
+    ecos_target = umbral_3,
+    strat_ecos_target = umbral_5,
+    sp_rep_target = umbral_7,
+    sp_rn_target = umbral_9,
+    ecos_serv_target = umbral_11,
+    includes = figuras_de_manejo, 
+    cost = costo
+  ) %>% 
+  mutate(
+    includes = map(includes, ~ if (.x == "RUNAP y OMEC") c("RUNAP", "OMEC") else c("RUNAP"))
+  ) %>% 
+  ## Don't need these columns
+  select(-starts_with("atributo"), -id) %>% 
+  ## Species national responsibility targets are variable, 
+  ## so correct to make these targets binary (evaluate or not)
+  mutate(sp_rn_target = sp_rn_target > 0) %>% 
+  ## Remove unnecessary scenarios
+  distinct()
+
+feature_abbr <- c(
+  ecos_target      = "Eco",
+  strat_ecos_target = "Estr",
+  ecos_serv_target = "Serv",
+  sp_rep_target    = "EspRep"
+)
+
+build_model_name <- function(ecos_target, strat_ecos_target, sp_rep_target,
+                             sp_rn_target, ecos_serv_target, includes, cost) {
+  parts <- c(
+    if (ecos_target != 0)       paste0(feature_abbr["ecos_target"], ecos_target),
+    if (strat_ecos_target != 0) paste0(feature_abbr["strat_ecos_target"], strat_ecos_target),
+    if (ecos_serv_target != 0)  paste0(feature_abbr["ecos_serv_target"], ecos_serv_target),
+    if (sp_rep_target != 0)     paste0(feature_abbr["sp_rep_target"], sp_rep_target),
+    if (isTRUE(sp_rn_target))   "EspRN"
   )
+  feature_str <- paste(parts, collapse = "+")
+  
+  includes_names <- unlist(includes)
+  includes_str <- if ("OMEC" %in% includes_names) {
+    "RUNAP+OMEC"
+  } else {
+    "RUNAP"
+  }
+  
+  paste0(feature_str, "+", includes_str, "_", cost)
 }
 
-## All valid combinations of features (at least 1)
-feature_combos <- get_combos(c("ecosystems", "strategic ecosystems", "species"))
-
-## All valid combinations of includes (must include RUNAP + any combo of others)
-include_combos <- get_combos(c("OMEC", "comunidades", "resguardos")) %>%
-  lapply(function(x) c("RUNAP", x)) %>%   # prepend RUNAP to each
-  c(list("RUNAP"))                        # add RUNAP-only option
-
-## Lookup tables for abbreviations (for run name)
-feature_abbr <- c(
-  "ecosystems" = "Ecos",
-  "strategic ecosystems" = "ESTR",
-  "species" = "Esp")
-
-include_abbr <- c(
-  "RUNAP" = "RUNAP",
-  "OMEC" = "OMEC",
-  "comunidades" = "Com",
-  "resguardos" = "Res")
-
-cost_abbr <- c(
-  "IHEH2022" = "IHEH",
-  "net benefit" = "Agr")
-
-
-
-## Create all permutations
-scenarios_df <- expand.grid(
-  target = c(17, 30),
-  cost   = c("IHEH2022", 
-             "net benefit"),   # not using net benefit/ag rent currently, but including for future
-  KEEP.OUT.ATTRS = FALSE
-) %>%
-  merge(tibble(features = feature_combos)) %>%
-  merge(tibble(includes = include_combos)) %>%
+scenarios_df <- scenarios_df %>%
   mutate(
-    model_name = paste0(
-      map2_chr(features, target, ~ paste(paste0(feature_abbr[.x], .y), collapse = "+")),
-      "+",
-      map_chr(includes, ~ paste(include_abbr[.x], collapse = "+")),
-      "_",
-      cost_abbr[cost]
+    model_name = pmap_chr(
+      list(ecos_target, strat_ecos_target, sp_rep_target,
+           sp_rn_target, ecos_serv_target, includes, cost),
+      build_model_name
     )
   )
 
-## Only want dataframe
-rm(feature_combos); rm(include_combos)
-rm(cost_abbr); rm(feature_abbr); rm(include_abbr)
-rm(get_combos)
 
+###### OLD CODE to manually create scenario combinations. 
+# ## Fxn to create combos
+# get_combos <- function(x, min_size = 1) {
+#   unlist(
+#     lapply(min_size:length(x), function(k) combn(x, k, simplify = FALSE)),
+#     recursive = FALSE
+#   )
+# }
+# 
+# ## All valid combinations of features (at least 1)
+# feature_combos <- get_combos(c("ecosystems", "strategic ecosystems", "species"))
+# 
+# ## All valid combinations of includes (must include RUNAP + any combo of others)
+# include_combos <- get_combos(c("OMEC", "comunidades", "resguardos")) %>%
+#   lapply(function(x) c("RUNAP", x)) %>%   # prepend RUNAP to each
+#   c(list("RUNAP"))                        # add RUNAP-only option
+# 
+# ## Lookup tables for abbreviations (for run name)
+# feature_abbr <- c(
+#   "ecosystems" = "Ecos",
+#   "strategic ecosystems" = "ESTR",
+#   "species" = "Esp")
+# 
+# include_abbr <- c(
+#   "RUNAP" = "RUNAP",
+#   "OMEC" = "OMEC",
+#   "comunidades" = "Com",
+#   "resguardos" = "Res")
+# 
+# cost_abbr <- c(
+#   "IHEH2022" = "IHEH",
+#   "net benefit" = "Agr")
+# 
+# 
+# 
+# ## Create all permutations
+# scenarios_df <- expand.grid(
+#   target = c(17, 30),
+#   cost   = c("IHEH2022", 
+#              "net benefit"),   # not using net benefit/ag rent currently, but including for future
+#   KEEP.OUT.ATTRS = FALSE
+# ) %>%
+#   merge(tibble(features = feature_combos)) %>%
+#   merge(tibble(includes = include_combos)) %>%
+#   mutate(
+#     model_name = paste0(
+#       map2_chr(features, target, ~ paste(paste0(feature_abbr[.x], .y), collapse = "+")),
+#       "+",
+#       map_chr(includes, ~ paste(include_abbr[.x], collapse = "+")),
+#       "_",
+#       cost_abbr[cost]
+#     )
+#   )
+# 
+# ## Only want dataframe
+# rm(feature_combos); rm(include_combos)
+# rm(cost_abbr); rm(feature_abbr); rm(include_abbr)
+# rm(get_combos)
+# 

@@ -36,8 +36,8 @@ includes <- here("data/includes")
 
 ## Human footprint ---------------------------------------------------
 ### Terrestrial -------------------
-## IHEH 2022 was used as template, so just vectorize and save
-iheh_v <- as.matrix(template_terra)
+## IHEH 2022 already rasterized, so just vectorize and save
+iheh_v <- as.matrix(rast(file.path(geo_dir, "IHEH_2022.tif")))
 iheh_v[is.na(iheh_v)] <- 0
 saveRDS(iheh_v, file.path(ipt_dir, "IHEH_2022.rds"))
 
@@ -55,6 +55,7 @@ iheh_2030_r <- rast(file.path(costs, "IHEH_2030/Huella_2030.tif")) %>%
   ) %>% 
   ## Finally, make sure it's exactly matching template
   resample(template_terra, method = "bilinear")
+names(iheh_2030_r) <- "IHEH_2030"
 
 ## Save raster
 writeRaster(iheh_2030_r, file.path(geo_dir, "IHEH_2030.tif"), overwrite = TRUE)
@@ -782,90 +783,102 @@ spp_nr_df <- spp_ranges_updated_df %>%
       range_omec_runap_km2 >= target ~ TRUE,
       range_omec_runap_km2 < target ~ FALSE
     )
+  ) %>% 
+  
+  ## Put into longer format to more easily filter
+  pivot_longer(
+    cols = c(target_met_runap, target_met_omec_runap),
+    names_to = c(".value", "conservation_type"),
+    names_pattern = "(target_met)_(runap|omec_runap)"
+  ) %>% 
+  mutate(
+    conservation_type = recode(conservation_type,
+                               "runap" = "RUNAP",
+                               "omec_runap" = "OMEC")
   )
 
 ## Save
-write_csv(spp_nr_df, file.path(ipt_dir, "biomod_spp_responsiblidad_nacional.csv"))
+write_csv(spp_nr_df, file.path(ipt_dir, "biomod_spp_responsibilidad_nacional.csv"))
 
 # ## Visualize responsibility spread
-thres <- spp_nr_df %>% filter(responsibility <= 0.3) #Cut off long tail to visualize easier
-
-ggplot(thres, aes(x = responsibility)) +
-  geom_histogram(bins = 30, color = "black", fill = "steelblue4", alpha = 0.6) +
-  theme_minimal()+
-  stat_bin(
-    bins = 30,
-    geom = "text",
-    size = 3.5,
-    aes(label = after_stat(count)),
-    vjust = -0.5
-  ) +
-  labs(
-    x = "Responsibilidad",
-    y = "n especies"
-  )
-
-## How many spp met target?
-targets_met <- spp_nr_df %>%
-  pivot_longer(cols = target_met_runap:target_met_omec_runap, names_to = "conservation_type") %>%
-  group_by(conservation_type, value, class) %>%
-  summarize(n = n()) %>%
-  mutate(conservation_type = recode(conservation_type,
-                                      "target_met_runap" = "RUNAP",
-                                      "target_met_omec_runap"= "OMEC"),
-         value = case_when(
-           value == TRUE ~ "NR target met",
-           value == FALSE ~ "NR target not met"))
-
-ggplot(targets_met, aes(x = class, y = n, fill = conservation_type)) +
-  geom_col(position = "dodge",
-           alpha = 0.55,
-           linewidth = 1,
-           aes(color = conservation_type)) +
-  facet_wrap(~value)+
-  geom_text(
-    aes(label = n),
-    position = position_dodge(width = 0.9),
-    vjust = -.8,
-    color = "black",
-    fontface = "bold",
-    size = 3
-  ) +
-  theme_bw() +
-  labs(y = "n especies",
-       fill = "Conservation Type",
-       color = "Conservation Type")+
-  theme(
-    axis.title.x = element_blank(),
-    axis.text.x = element_text(angle = 25, vjust = 0.6),
-  )
-
-targets_met %>%
-  filter(value == "NR target not met") %>%
-ggplot(aes(x = class, y = n, fill = conservation_type)) +
-  geom_col(position = "dodge",
-           alpha = 0.55,
-           linewidth = 1,
-           aes(color = conservation_type)) +
-  # facet_wrap(~value)+
-  geom_text(
-    aes(label = n),
-    position = position_dodge(width = 0.9),
-    vjust = -.8,
-    color = "black",
-    fontface = "bold",
-    size = 4
-  ) +
-  theme_bw() +
-  labs(y = "n especies",
-       title = "National Responsibility Not Met",
-       fill = "Conservation Type",
-       color = "Conservation Type")+
-  theme(
-    axis.title.x = element_blank(),
-    axis.text.x = element_text(angle = 25, vjust = 0.6),
-  )
-
+# thres <- spp_nr_df %>% filter(responsibility <= 0.3) #Cut off long tail to visualize easier
+# 
+# ggplot(thres, aes(x = responsibility)) +
+#   geom_histogram(bins = 30, color = "black", fill = "steelblue4", alpha = 0.6) +
+#   theme_minimal()+
+#   stat_bin(
+#     bins = 30,
+#     geom = "text",
+#     size = 3.5,
+#     aes(label = after_stat(count)),
+#     vjust = -0.5
+#   ) +
+#   labs(
+#     x = "Responsibilidad",
+#     y = "n especies"
+#   )
+# 
+# ## How many spp met target?
+# targets_met <- spp_nr_df %>%
+#   pivot_longer(cols = target_met_runap:target_met_omec_runap, names_to = "conservation_type") %>%
+#   group_by(conservation_type, value, class) %>%
+#   summarize(n = n()) %>%
+#   mutate(conservation_type = recode(conservation_type,
+#                                       "target_met_runap" = "RUNAP",
+#                                       "target_met_omec_runap"= "OMEC"),
+#          value = case_when(
+#            value == TRUE ~ "NR target met",
+#            value == FALSE ~ "NR target not met"))
+# 
+# ggplot(targets_met, aes(x = class, y = n, fill = conservation_type)) +
+#   geom_col(position = "dodge",
+#            alpha = 0.55,
+#            linewidth = 1,
+#            aes(color = conservation_type)) +
+#   facet_wrap(~value)+
+#   geom_text(
+#     aes(label = n),
+#     position = position_dodge(width = 0.9),
+#     vjust = -.8,
+#     color = "black",
+#     fontface = "bold",
+#     size = 3
+#   ) +
+#   theme_bw() +
+#   labs(y = "n especies",
+#        fill = "Conservation Type",
+#        color = "Conservation Type")+
+#   theme(
+#     axis.title.x = element_blank(),
+#     axis.text.x = element_text(angle = 25, vjust = 0.6),
+#   )
+# 
+# targets_met %>%
+#   filter(value == "NR target not met") %>%
+# ggplot(aes(x = class, y = n, fill = conservation_type)) +
+#   geom_col(position = "dodge",
+#            alpha = 0.55,
+#            linewidth = 1,
+#            aes(color = conservation_type)) +
+#   # facet_wrap(~value)+
+#   geom_text(
+#     aes(label = n),
+#     position = position_dodge(width = 0.9),
+#     vjust = -.8,
+#     color = "black",
+#     fontface = "bold",
+#     size = 4
+#   ) +
+#   theme_bw() +
+#   labs(y = "n especies",
+#        title = "National Responsibility Not Met",
+#        fill = "Conservation Type",
+#        color = "Conservation Type")+
+#   theme(
+#     axis.title.x = element_blank(),
+#     axis.text.x = element_text(angle = 25, vjust = 0.6),
+#   )
+# 
 
 ### -------------------------- Sparse Matrices --------------------------------
 # Here, we create one sparse matrix of "filtered" species for use in prioritizaiton,

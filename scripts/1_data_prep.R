@@ -14,6 +14,7 @@ pacman::p_load(       # automatically installs packages if needed
   here,               # easier file paths
   svMisc,             # progress bar
   purrr,              # faster lapply
+  svMisc,             # progress bar for looping
   Matrix)             # Matrices
 
 ## Local directories
@@ -768,20 +769,20 @@ spp_nr_df <- spp_ranges_updated_df %>%
     ## What is the area based target for each species?
     ## [NOTE: Here we need to use REAL range (not adjusted), since
     ## we can't have a target that is higher than the actually range]
-    target = range_km2 * responsibility,
+    target_km2 = range_km2 * responsibility,
     
     ## Also cannot have target less than 1km2 (resolution of solution)
-    target = pmax(target, 1),
+    target_km2 = pmax(target_km2, 1),
     
     ## So, which species already meet their target within existing conservation areas?
     target_met_runap = case_when(
-      range_runap_km2 >= target ~ TRUE,
-      range_runap_km2 < target ~ FALSE
+      range_runap_km2 >= target_km2 ~ TRUE,
+      range_runap_km2 < target_km2 ~ FALSE
     ),
     
     target_met_omec_runap = case_when(
-      range_omec_runap_km2 >= target ~ TRUE,
-      range_omec_runap_km2 < target ~ FALSE
+      range_omec_runap_km2 >= target_km2 ~ TRUE,
+      range_omec_runap_km2 < target_km2 ~ FALSE
     )
   ) %>% 
   
@@ -881,57 +882,84 @@ write_csv(spp_nr_df, file.path(ipt_dir, "biomod_spp_responsibilidad_nacional.csv
 # 
 
 ### -------------------------- Sparse Matrices --------------------------------
-# Here, we create one sparse matrix of "filtered" species for use in prioritizaiton,
+# Here, we create two sparse matrices for "filtered" species for use in prioritizaiton,
 # and a series of matrices for all species that can be used in other post-hoc analysis.
 
-#### ---------------------------- Filtered ---------------------------------
-# Use the lowest filter threshold, which returns the highest number of species
+#### ------------------------ Representativeness -------------------------------
+# One matrix created for "representativeness", using the lowest filter threshold
+# (30% and just RUNAP) to return the highest number of species. 
 
 ## List of species for "filtered" matrix
-spp_m_list <- spp_filtered_df %>% 
+spp_filtered_rep_df <- read_csv(file.path(ipt_dir, "biomod_spp_filtered_representatividad.csv"))
+
+spp_m_list <- spp_filtered_rep_df %>% 
   filter(targets == 30,
          conservation_type == "RUNAP") %>% 
   ## Only need these variables
   select(scientific_name, class, file_name)
 
-
-## Create matrix by looping through species list
-for (i in 1:nrow(spp_m_list)){
-  ## For the first species, create the matrix
-  if(i == 1) {
-    ## Read in SDM and match template
-    r <- rast(spp_m_list$file_name[1]) %>% 
-      project(., my_crs, method = "near") %>%
-      ## Already close to template resolution, so no need to aggregate
-      resample(., template_terra, method = "near")
-    
-    ## Change name to just species
-    names(r) <- spp_m_list$scientific_name[1]
-    
-    ## Get binary values, then turn into sparse matrix
-    v <- values(r)
-    v[is.na(v)]<-0
-    vmat <- as(v,'sparseMatrix')
-    
-  ## For the rest, add to the matrix each time
-  } else {
-    r <- rast(spp_m_list$file_name[i]) %>%
-      project(., my_crs, method = "near") %>% 
-      resample(., template_terra, method = "near")
-    names(r) <- spp_m_list$scientific_name[i]
-    
-    v2 <- values(r)
-    v2[is.na(v2)]<-0
-    vmat2 <- as(v2,'sparseMatrix')
-    vmat <- cbind(vmat, vmat2)
-    
-    progress(i-1, max.value=nrow(spp_m_list))
+## Function for created matrix from filtered species list
+filtered_matrix <- function(spp_m_list) {
+  ## Looping through species list
+  for (i in 1:nrow(spp_m_list)){
+    ## For the first species, create the matrix
+    if(i == 1) {
+      ## Read in SDM and match template
+      r <- rast(spp_m_list$file_name[1]) %>% 
+        project(., my_crs, method = "near") %>%
+        ## Already close to template resolution, so no need to aggregate
+        resample(., template_terra, method = "near")
+      
+      ## Change name to just species
+      names(r) <- spp_m_list$scientific_name[1]
+      
+      ## Get binary values, then turn into sparse matrix
+      v <- values(r)
+      v[is.na(v)]<-0
+      vmat <- as(v,'sparseMatrix')
+      
+      ## For the rest, add to the matrix each time
+    } else {
+      r <- rast(spp_m_list$file_name[i]) %>%
+        project(., my_crs, method = "near") %>% 
+        resample(., template_terra, method = "near")
+      names(r) <- spp_m_list$scientific_name[i]
+      
+      v2 <- values(r)
+      v2[is.na(v2)]<-0
+      vmat2 <- as(v2,'sparseMatrix')
+      vmat <- cbind(vmat, vmat2)
+      
+      progress(i-1, max.value=nrow(spp_m_list))
+    }
   }
+  return(vmat)
 }
 
-## Export
-saveRDS(vmat, file.path(ipt_dir, "biomod_filtered.rds"))
+## Run for representativeness
+vmat_rep <- filtered_matrix(spp_m_list)
 
+## Export
+saveRDS(vmat_rep, file.path(ipt_dir, "biomod_filtered_representatividad.rds"))
+rm(spp_m_list, vmat_rep)
+
+#### ------------------------ National Responsibility --------------------------
+# A second matrix filtering species based on "national responsibility" thresholds.
+spp_nr_df <- read_csv(file.path(ipt_dir, "biomod_spp_responsibilidad_nacional.csv"))
+
+spp_m_list <- spp_nr_df %>% 
+  filter(target_met == FALSE,
+         conservation_type == "RUNAP") %>% 
+  ## Only need these variables
+  select(scientific_name, class) %>% 
+  mutate(file_name = file.path(biomod_fp, "presente", paste0(
+    sub(" ", "_", scientific_name), "_10_MAXENT.tif")))
+
+vmat_nr <- filtered_matrix(spp_m_list)
+
+## Export
+saveRDS(vmat_nr, file.path(ipt_dir, "biomod_filtered_responsibilidad_nacional.rds"))
+rm(spp_m_list, vmat_nr)
 
 
 #### ------------------------- All BioModelos -------------------------------

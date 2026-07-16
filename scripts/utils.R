@@ -8,6 +8,7 @@ if (!require("pacman")) install.packages("pacman")
 pacman::p_load(       # automatically installs packages if needed
   tidyverse,          # always
   here,               # easier file paths
+  readxl,             # read .xls format
   terra,              # GIS 
   sf,                 # vector functions
   purrr)              # faster lapply
@@ -200,26 +201,26 @@ if (!file.exists(file.path(geo_dir, "template_marino.tif"))) {
 }
 
 ## ------ Combined template -----------------------------------
-# The combined template is empty (no values), since it is not used to define
-# planning units for the model. It is currently only used for data spanning
-# both marine and terrestrial (e.g. RUNAP and OMECs)
-
-## Get the combined extent from marine and terrestrial templates
-combined_ext <- ext(
-  min(xmin(template_terra), xmin(template_mar)), # xmin
-  max(xmax(template_terra), xmax(template_mar)), # xmax
-  min(ymin(template_terra), ymin(template_mar)), # ymin
-  max(ymax(template_terra), ymax(template_mar))  # ymax
-)
-
-## Generate the empty raster and correct resolution and CRS
-template_combined <- rast(
-  ext = combined_ext,
-  resolution = 1000,
-  crs = my_crs
-)
-
-rm(combined_ext)
+# # The combined template is empty (no values), since it is not used to define
+# # planning units for the model. It is currently only used for data spanning
+# # both marine and terrestrial (e.g. RUNAP and OMECs)
+# 
+# ## Get the combined extent from marine and terrestrial templates
+# combined_ext <- ext(
+#   min(xmin(template_terra), xmin(template_mar)), # xmin
+#   max(xmax(template_terra), xmax(template_mar)), # xmax
+#   min(ymin(template_terra), ymin(template_mar)), # ymin
+#   max(ymax(template_terra), ymax(template_mar))  # ymax
+# )
+# 
+# ## Generate the empty raster and correct resolution and CRS
+# template_combined <- rast(
+#   ext = combined_ext,
+#   resolution = 1000,
+#   crs = my_crs
+# )
+# 
+# rm(combined_ext)
 
 
 
@@ -267,11 +268,21 @@ ecosys_coverage <- function(ecosys_m,            # ecosystem matrix
   ecosys_m[is.na(ecosys_m)] <- 0
   
   ## Read in RUNAP and OMEC matrices
-  runap <- readRDS(file.path(ipt_dir, "runap.rds"))[ids, ] == 1
-  runap[is.na(runap)] <- FALSE
-  
-  omec <- readRDS(file.path(ipt_dir, "omec.rds"))[ids, ] == 1
-  omec[is.na(omec)] <- FALSE
+  if (ecosys_type == "terrestrial") {
+    runap <- readRDS(file.path(ipt_dir, "runap_terrestres.rds"))[ids, ] == 1
+    runap[is.na(runap)] <- FALSE
+    
+    omec <- readRDS(file.path(ipt_dir, "omec_terrestres.rds"))[ids, ] == 1
+    omec[is.na(omec)] <- FALSE
+    
+  } else if (ecosys_type == "marine") {
+    runap <- readRDS(file.path(ipt_dir, "runap_marinos.rds"))[ids, ] == 1
+    runap[is.na(runap)] <- FALSE
+    
+    omec <- readRDS(file.path(ipt_dir, "omec_marinos.rds"))[ids, ] == 1
+    omec[is.na(omec)] <- FALSE
+  }
+
   
   ## Define locked in areas for both conservation scenarios
   locked_runap <- runap
@@ -364,20 +375,20 @@ scenarios_df <-
   distinct()
 
 feature_abbr <- c(
-  ecos_target      = "Eco",
+  ecos_target = "Eco",
   strat_ecos_target = "Estr",
   ecos_serv_target = "Serv",
-  sp_rep_target    = "EspRep"
+  sp_rep_target = "EspRep"
 )
 
 build_model_name <- function(ecos_target, strat_ecos_target, sp_rep_target,
                              sp_rn_target, ecos_serv_target, includes, cost) {
   parts <- c(
-    if (ecos_target != 0)       paste0(feature_abbr["ecos_target"], ecos_target),
+    if (ecos_target != 0) paste0(feature_abbr["ecos_target"], ecos_target),
     if (strat_ecos_target != 0) paste0(feature_abbr["strat_ecos_target"], strat_ecos_target),
-    if (ecos_serv_target != 0)  paste0(feature_abbr["ecos_serv_target"], ecos_serv_target),
-    if (sp_rep_target != 0)     paste0(feature_abbr["sp_rep_target"], sp_rep_target),
-    if (isTRUE(sp_rn_target))   "EspRN"
+    if (ecos_serv_target != 0) paste0(feature_abbr["ecos_serv_target"], ecos_serv_target),
+    if (sp_rep_target != 0) paste0(feature_abbr["sp_rep_target"], sp_rep_target),
+    if (isTRUE(sp_rn_target)) "EspRN"
   )
   feature_str <- paste(parts, collapse = "+")
   
@@ -400,6 +411,7 @@ scenarios_df <- scenarios_df %>%
     )
   )
 
+rm(feature_abbr)
 
 ###### OLD CODE to manually create scenario combinations. 
 # ## Fxn to create combos

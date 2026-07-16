@@ -88,7 +88,7 @@ prioritizr_model <- function(ecos_target, strat_ecos_target, sp_rep_target,
     
     ## Read in df and filter to only ecosystems not meeting targets
     cons_type <- ifelse("OMEC" %in% includes, "OMEC", "RUNAP") 
-    ecosys_df <- read_csv(file.path(ipt_dir, "ecosys_filtered.csv"), show_col_types = FALSE) %>% 
+    ecosys_df <- read_csv(file.path(ipt_dir, "terrestrial_ecosys_filtered.csv"), show_col_types = FALSE) %>% 
       filter(targets == ecos_target,
              conservation_type == cons_type)
     
@@ -601,7 +601,7 @@ prioritizr_model <- function(ecos_target, strat_ecos_target, sp_rep_target,
 
 # ========== RUN PRIORITIZATION ==============================================
 ## Testing subset for now
-scenarios_df <- scenarios_df[1:5, ]
+# scenarios_df <- scenarios_df[1:5, ]
 
 
 ## If process stopped part-way, use this code to remove scenarios already completed

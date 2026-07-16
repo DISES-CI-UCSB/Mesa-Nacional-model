@@ -97,20 +97,29 @@ saveRDS(hm_v, file.path(ipt_dir, "huella_humana_marina.rds"))
 rm(iheh_r, hm_cover_r, hm_r)
 
 ## RUNAP ---------------------------------------
+# For now, make all categories the same (can change later)
 runap_vect <- vect(file.path(includes, "RUNAP/runap.shp")) %>% 
-  project(., crs(template_combined))
+  project(., crs(my_crs))
 writeVector(runap_vect, file.path(geo_dir, "runap.shp"))
 
-### For now, make all categories the same (can change later)
-runap_r <- rasterize(runap_vect, template_combined)
-names(runap_r) <- "RUNAP"
-writeRaster(runap_r, file.path(geo_dir, "runap.tif"), overwrite = TRUE)
 
-## Save as matrix
-runap_v <- as.matrix(runap_r)
-runap_v[is.na(runap_v)] <- 0
-saveRDS(runap_v, file.path(ipt_dir, "runap.rds"))
+## Create two different versions for terrestrial and marine.
+runap_terra_r <- rasterize(runap_vect, template_terra)
+names(runap_terra_r) <- "RUNAP"
+writeRaster(runap_terra_r, file.path(geo_dir, "runap_terrestres.tif"), overwrite = TRUE)
 
+runap_mar_r <- rasterize(runap_vect, template_mar)
+names(runap_mar_r) <- "RUNAP"
+writeRaster(runap_mar_r, file.path(geo_dir, "runap_marinos.tif"), overwrite = TRUE)
+
+## Save as matrices
+runap_terra_v <- as.matrix(runap_terra_r)
+runap_terra_v[is.na(runap_terra_v)] <- 0
+saveRDS(runap_terra_v, file.path(ipt_dir, "runap_terrestres.rds"))
+
+runap_mar_v <- as.matrix(runap_mar_r)
+runap_mar_v[is.na(runap_mar_v)] <- 0
+saveRDS(runap_mar_v, file.path(ipt_dir, "runap_marinos.rds"))
 
 ## OMECs ---------------------------------
 omec_fp <- file.path(includes, "WDOECM_Jun2026_Public_shp")
@@ -132,15 +141,22 @@ writeVector(omec_vect, file.path(geo_dir, "omecs_col.shp"), overwrite = TRUE)
 
 ## Now rasterize
 ## NOTE: for now, treating all categories the same. Can change later
-omec_r <- rasterize(omec_vect, template_combined)
-names(omec_r) <- "OMEC"
-writeRaster(omec_r, file.path(geo_dir, "omec.tif"), overwrite = TRUE)
+omec_terra_r <- rasterize(omec_vect, template_terra)
+names(omec_terra_r) <- "OMEC"
+writeRaster(omec_terra_r, file.path(geo_dir, "omec_terrestres.tif"), overwrite = TRUE)
+
+omec_mar_r <- rasterize(omec_vect, template_mar)
+names(omec_mar_r) <- "OMEC"
+writeRaster(omec_mar_r, file.path(geo_dir, "omec_marinos.tif"), overwrite = TRUE)
 
 ## Save as matrix
-omec_v <- as.matrix(omec_r)
-omec_v[is.na(omec_v)] <- 0
-saveRDS(omec_v, file.path(ipt_dir, "omec.rds"))
+omec_terra_v <- as.matrix(omec_terra_r)
+omec_terra_v[is.na(omec_terra_v)] <- 0
+saveRDS(omec_terra_v, file.path(ipt_dir, "omec_terrestres.rds"))
 
+omec_mar_v <- as.matrix(omec_mar_r)
+omec_mar_v[is.na(omec_mar_v)] <- 0
+saveRDS(omec_mar_v, file.path(ipt_dir, "omec_marinos.rds"))
 
 
 ## Afro-Colombian communities ----------------------------------
@@ -381,9 +397,8 @@ ecosys_mat <- sparseMatrix(
   )
 )
 
-## Save
+## Save matrix
 saveRDS(ecosys_mat, file.path(ipt_dir, "ecosistemas_IAVH_2024.rds"))
-
 
 
 ## How many ecosystems already are meeting targets under RUNAP and OMEC?

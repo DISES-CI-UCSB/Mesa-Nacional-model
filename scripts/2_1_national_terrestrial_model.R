@@ -17,7 +17,7 @@ source(here("scripts/utils.R"))
 set.seed(500)
 
 ipt_dir <- here("data/model_inputs")
-opt_dir <- here("results_new")
+opt_dir <- here("results/national/terrestrial")
 
 for (dir in c(ipt_dir, opt_dir)){
   if (!dir.exists(dir)) dir.create(dir)  # Create directories if needed
@@ -564,7 +564,7 @@ prioritizr_model <- function(ecos_target, strat_ecos_target, sp_rep_target,
   freq_tbl <- freq(s_rast)
   cost_summary <- eval_cost_summary(p, s) # Is this even meaningful?
   eval_summary <- data.frame(
-    run = model_name,
+    scenario = model_name,
     n_total = sum(freq_tbl$count),
     n_new_protection = get_freq(freq_tbl, "Priority area"),
     n_locked_in = get_freq(freq_tbl, "Locked in"),
@@ -578,9 +578,9 @@ prioritizr_model <- function(ecos_target, strat_ecos_target, sp_rep_target,
   if (file.exists(csv_path)) {
     summary_df <- read_csv(csv_path, show_col_types = FALSE)
 
-    if (any(summary_df$run == eval_summary$run)) {
-      ## Does the run exist? If so, overwrite
-      summary_df[summary_df$run == eval_summary$run, ] <- eval_summary
+    if (any(summary_df$scenario == eval_summary$scenario)) {
+      ## Does the scenario exist? If so, overwrite
+      summary_df[summary_df$scenario == eval_summary$scenario, ] <- eval_summary
 
     } else {
       ## If not, append to table
@@ -600,26 +600,31 @@ prioritizr_model <- function(ecos_target, strat_ecos_target, sp_rep_target,
 
 
 # ========== RUN PRIORITIZATION ==============================================
-## Testing subset for now
-# scenarios_df <- scenarios_df[1:5, ]
+## If process stopped part-way, remove scenarios already completed or permanently failed
+completed_list <- file.path(opt_dir, "master_eval_summary.csv")
+failed_list    <- file.path(opt_dir, "failed_scenarios.txt")
 
+if (file.exists(completed_list)) {
+  completed <- read_csv(completed_list)
+  scenarios_terra_df <- scenarios_terra_df %>%
+    filter(!model_name %in% completed$scenario)
+  rm(completed)
+}
 
-## If process stopped part-way, use this code to remove scenarios already completed
-completed <- read_csv(file.path(opt_dir, "master_eval_summary.csv"))
-# failed <- file.path(opt_dir, "failed_scenarios.txt")
-# failed <- read.table(failed, sep = "|",
-#                          col.names = c("time", "model_name", "error"),
-#                          strip.white = TRUE) %>%
-#   ## remove memory errors for now
-#   filter(error == "Error 10001: Out of memory")
-# failed_list <- unique(failed$model_name)
-scenarios_df <- scenarios_df %>%
-  filter(!model_name %in% completed$run)
-  # filter(!model_name %in% failed_list)
-# rm(completed); rm(failed); rm(failed_list)
+if (file.exists(failed_list)) {
+  failed <- read.table(failed_list, sep = "|",
+                       col.names = c("time", "model_name", "error"),
+                       strip.white = TRUE) %>%
+    ## remove memory errors for now
+    filter(error == "Error 10001: Out of memory")
+  failed_list <- unique(failed$model_name)
+  scenarios_terra_df <- scenarios_terra_df %>%
+    filter(!model_name %in% failed_list)
+  rm(failed); rm(failed_list)
+}
 
 ## Generate model over list of scenarios
-purrr::pmap(scenarios_df, prioritizr_model)
+purrr::pmap(scenarios_terra_df, prioritizr_model)
 
 
 

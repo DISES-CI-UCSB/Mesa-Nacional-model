@@ -345,11 +345,13 @@ ecosys_coverage <- function(ecosys_m,            # ecosystem matrix
 
 # ========== MODEL SCENARIOS =================================================
 # Create a dataframe with all model scenario permutations
-# NOTE: For now, just using excel sheet provided by Mesa Nacional.
-# Once confirmed, may re-introduce this code so generating scenario lists 
-# doesn't need to be done manually in Excel.
 
-scenarios_df <- 
+
+## ------ Terrestrial -----------------------------------
+# NOTE: For now, just using excel sheet provided by Mesa Nacional.
+# Once confirmed, may re-introduce code to more flexibly generate dataframe.
+
+scenarios_terra_df <- 
   ## Read in excel file from Mesa Nacional
   read_excel(file.path(ipt_dir, "corridas_05062026.xlsx"), 
              sheet = "Hoja1", skip = 1) %>% 
@@ -402,7 +404,7 @@ build_model_name <- function(ecos_target, strat_ecos_target, sp_rep_target,
   paste0(feature_str, "+", includes_str, "_", cost)
 }
 
-scenarios_df <- scenarios_df %>%
+scenarios_terra_df <- scenarios_terra_df %>%
   mutate(
     model_name = pmap_chr(
       list(ecos_target, strat_ecos_target, sp_rep_target,
@@ -413,62 +415,34 @@ scenarios_df <- scenarios_df %>%
 
 rm(feature_abbr)
 
-###### OLD CODE to manually create scenario combinations. 
-# ## Fxn to create combos
-# get_combos <- function(x, min_size = 1) {
-#   unlist(
-#     lapply(min_size:length(x), function(k) combn(x, k, simplify = FALSE)),
-#     recursive = FALSE
-#   )
-# }
-# 
-# ## All valid combinations of features (at least 1)
-# feature_combos <- get_combos(c("ecosystems", "strategic ecosystems", "species"))
-# 
-# ## All valid combinations of includes (must include RUNAP + any combo of others)
-# include_combos <- get_combos(c("OMEC", "comunidades", "resguardos")) %>%
-#   lapply(function(x) c("RUNAP", x)) %>%   # prepend RUNAP to each
-#   c(list("RUNAP"))                        # add RUNAP-only option
-# 
-# ## Lookup tables for abbreviations (for run name)
-# feature_abbr <- c(
-#   "ecosystems" = "Ecos",
-#   "strategic ecosystems" = "ESTR",
-#   "species" = "Esp")
-# 
-# include_abbr <- c(
-#   "RUNAP" = "RUNAP",
-#   "OMEC" = "OMEC",
-#   "comunidades" = "Com",
-#   "resguardos" = "Res")
-# 
+
+## ------ Marine -----------------------------------
+feature_abbr <- c(
+  "ecosystems" = "Ecos",
+  "mangroves"  = "Mang")
+
+include_abbr <- c(
+  "RUNAP" = "RUNAP",
+  "OMEC"  = "OMEC")
+
 # cost_abbr <- c(
-#   "IHEH2022" = "IHEH",
-#   "net benefit" = "Agr")
-# 
-# 
-# 
-# ## Create all permutations
-# scenarios_df <- expand.grid(
-#   target = c(17, 30),
-#   cost   = c("IHEH2022", 
-#              "net benefit"),   # not using net benefit/ag rent currently, but including for future
-#   KEEP.OUT.ATTRS = FALSE
-# ) %>%
-#   merge(tibble(features = feature_combos)) %>%
-#   merge(tibble(includes = include_combos)) %>%
-#   mutate(
-#     model_name = paste0(
-#       map2_chr(features, target, ~ paste(paste0(feature_abbr[.x], .y), collapse = "+")),
-#       "+",
-#       map_chr(includes, ~ paste(include_abbr[.x], collapse = "+")),
-#       "_",
-#       cost_abbr[cost]
-#     )
-#   )
-# 
-# ## Only want dataframe
-# rm(feature_combos); rm(include_combos)
-# rm(cost_abbr); rm(feature_abbr); rm(include_abbr)
-# rm(get_combos)
-# 
+#   "huella_marina" = "HHM") #only one cost for now
+
+scenarios_mar_df <- expand.grid(
+  target = c(30, 50),
+  includes = list(c("RUNAP"), c("RUNAP", "OMEC"))
+  ) %>%
+  mutate(
+    features = list(c("ecosystems", "mangroves")),
+    model_name = paste0(
+      map_chr(target, ~ paste(paste0(feature_abbr, .x), collapse = "+")),
+      "+",
+      map_chr(includes, ~ paste(include_abbr[.x], collapse = "+")),
+      "_",
+      "HHM" #cost layer
+    )
+  )
+
+## Only want dataframe
+rm(cost_abbr); rm(feature_abbr); rm(include_abbr)
+

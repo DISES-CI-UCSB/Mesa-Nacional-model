@@ -2,20 +2,16 @@
 ## Purpose: Set parameters and run prioritization models for Colombia
 
 # ========== SETTING UP =======================================================
-## load packages
+## Load packages
 library(prioritizr)  # modeling package
 library(gurobi)      # solver
-library(sf)          # vector data
-library(terra)       # raster/GIS data
-library(tidyverse)   # always
 library(Matrix)      # using sparse matrices
-library(here)        # easier filepaths
-library(purrr)       # run models over list
-source(here("scripts/utils.R"))
+
+## Load required functions and objects
+source("scripts/utils.R")
 
 ## Set seed and directories
 set.seed(500)
-
 ipt_dir <- here("data/model_inputs")
 opt_dir <- here("results/national/terrestrial")
 
@@ -28,9 +24,8 @@ for (dir in c(ipt_dir, opt_dir)){
 ## Wrapping all the model building and running inside a function 
 ## to easily run over a list of scenarios.
 
-# prioritizr_model <- function(target, cost, features, includes, model_name, ids, pus) {
-prioritizr_model <- function(ecos_target, strat_ecos_target, sp_rep_target, 
-                             sp_rn_target, ecos_serv_target, includes, cost, model_name) {
+terrestrial_model <- function(ecos_target, strat_ecos_target, sp_rep_target, 
+                              sp_rn_target, ecos_serv_target, includes, cost, model_name) {
   ## Print scenario and time of start
   message("Running scenario: ", model_name, 
           "\nRun start: ", format(Sys.time(), "%H:%M:%S"))
@@ -87,7 +82,7 @@ prioritizr_model <- function(ecos_target, strat_ecos_target, sp_rep_target,
     ecosys_v <- ecosys_v[, ids] # only keep cells in PUs
     
     ## Read in df and filter to only ecosystems not meeting targets
-    cons_type <- ifelse("OMEC" %in% includes, "OMEC", "RUNAP") 
+    cons_type <- ifelse("OMEC" %in% includes, "RUNAP_OMEC", "RUNAP") 
     ecosys_df <- read_csv(file.path(ipt_dir, "terrestrial_ecosys_filtered.csv"), show_col_types = FALSE) %>% 
       filter(targets == ecos_target,
              conservation_type == cons_type)
@@ -147,7 +142,7 @@ prioritizr_model <- function(ecos_target, strat_ecos_target, sp_rep_target,
       species_rij <- species_rij[, ids]
       
       ## Filter dataframe and then matrix by targets
-      species_df <- read_csv(file.path(ipt_dir, "biomod_spp_filtered_representatividad.csv"), show_col_types = FALSE) %>%
+      species_df <- read_csv(file.path(ipt_dir, "biomod_spp_filtered_representatividad.csv"), show_col_types = FALSE) %>% 
         filter(targets == sp_rep_target,                # match target
                conservation_type == species_cons_type,  # match RUNAP/RUNAP+OMEC
                class != "Actinopteri")                  # for now, don't consider fish (Elkin's recommendation) 
@@ -624,7 +619,7 @@ if (file.exists(failed_list)) {
 }
 
 ## Generate model over list of scenarios
-purrr::pmap(scenarios_terra_df, prioritizr_model)
+purrr::pmap(scenarios_terra_df, terrestrial_model)
 
 
 

@@ -20,7 +20,7 @@ ipt_dir <- here("data/model_inputs")
 opt_dir <- here("results/national/terrestrial")
 
 for (dir in c(ipt_dir, opt_dir)){
-  if (!dir.exists(dir)) dir.create(dir)  # Create directories if needed
+  if (!dir.exists(dir)) dir.create(dir, recursive = TRUE)  # Create directories if needed
 }; rm(dir)
 
 

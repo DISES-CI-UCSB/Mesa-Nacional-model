@@ -444,5 +444,5 @@ scenarios_mar_df <- expand.grid(
   )
 
 ## Only want dataframe
-rm(cost_abbr); rm(feature_abbr); rm(include_abbr)
+rm(feature_abbr); rm(include_abbr)
 

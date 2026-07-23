@@ -1,6 +1,8 @@
 ## script: utils
 ## Purpose: Functions and dataframes created for use in other scripts that can be loade
 
+
+# ========== PACKAGES & DIRECTORIES ==========================================
 ## Load/install required libraries
 if (!require("pacman")) install.packages("pacman")
 
@@ -21,7 +23,7 @@ ipt_dir <- here("data/model_inputs")      # Inputs directly used in prioritizr m
 base_dirs <- c(temp_dir, geo_dir, ipt_dir)
 
 ## Sub-directories based on model level/region
-sub_dirs  <- c("nacional", 
+sub_dirs  <- c("national", 
                "sirap/eje_cafetero",
                "sirap/orinoquia") 
 
@@ -54,7 +56,7 @@ my_crs <- "EPSG:9377"
 
 ## If the template hasn't yet been created, then it will be. 
 ## Otherwise, save time and read in the existing template
-template_path <- file.path(geo_dir, "nacional", "template_terrestre.tif")
+template_path <- file.path(geo_dir, "national", "template_terrestre.tif")
 
 if (!file.exists(template_path)) {
   ## Open raster from geodatabase
@@ -74,7 +76,7 @@ if (!file.exists(template_path)) {
   
   ## Save raster as one of the model costs (IHEH2022)
   writeRaster(iheh_r, 
-              file.path(geo_dir, "nacional", "IHEH_2022.tif"), 
+              file.path(geo_dir, "national", "IHEH_2022.tif"), 
               overwrite = TRUE)
   
   ## Save terrestrial template as binary version
@@ -100,7 +102,7 @@ outline <- as.polygons(mask); rm(mask)
 # to generate a template raster (that makes sure all PUs have a cost).
 # Same as terrestrial, this template will define the PUs for marine model.
 
-template_path <- file.path(geo_dir, "nacional", "template_marino.tif")
+template_path <- file.path(geo_dir, "national", "template_marino.tif")
 
 ## Only run all this code if needed (the first time)
 if (!file.exists(template_path)) {
@@ -173,10 +175,10 @@ if (!file.exists(template_path)) {
   
   ## Save the marine ecosystems raster, and marine IDs CSV
   writeRaster(ecosys_mar_r, 
-              file.path(geo_dir, "nacional", "ecosistemas_marinos.tif"), 
+              file.path(geo_dir, "national", "ecosistemas_marinos.tif"), 
               overwrite = TRUE)
   
-  write_csv(mar_df, file.path(geo_dir, "nacional", "ecosistemas_IDs_marinos.csv"))
+  write_csv(mar_df, file.path(geo_dir, "national", "ecosistemas_IDs_marinos.csv"))
   
   
   ## 2. Add in Mangroves -----------------------------------
@@ -195,7 +197,7 @@ if (!file.exists(template_path)) {
   
   ## Save mangroves raster
   writeRaster(manglares_r, 
-              file.path(geo_dir, "nacional", "manglares.tif"), 
+              file.path(geo_dir, "national", "manglares.tif"), 
               overwrite = TRUE)
   
   
@@ -395,17 +397,17 @@ ecosys_coverage <- function(ecosys_m,            # ecosystem matrix
   
   ## Read in RUNAP and OMEC matrices
   if (ecosys_type == "terrestrial") {
-    runap <- readRDS(file.path(ipt_dir, "nacional", "runap_terrestres.rds"))[ids, ] == 1
+    runap <- readRDS(file.path(ipt_dir, "national", "runap_terrestres.rds"))[ids, ] == 1
     runap[is.na(runap)] <- FALSE
     
-    omec <- readRDS(file.path(ipt_dir, "nacional", "omec_terrestres.rds"))[ids, ] == 1
+    omec <- readRDS(file.path(ipt_dir, "national", "omec_terrestres.rds"))[ids, ] == 1
     omec[is.na(omec)] <- FALSE
     
   } else if (ecosys_type == "marine") {
-    runap <- readRDS(file.path(ipt_dir, "nacional", "runap_marinos.rds"))[ids, ] == 1
+    runap <- readRDS(file.path(ipt_dir, "national", "runap_marinos.rds"))[ids, ] == 1
     runap[is.na(runap)] <- FALSE
     
-    omec <- readRDS(file.path(ipt_dir, "nacional", "omec_marinos.rds"))[ids, ] == 1
+    omec <- readRDS(file.path(ipt_dir, "national", "omec_marinos.rds"))[ids, ] == 1
     omec[is.na(omec)] <- FALSE
   }
 
@@ -432,7 +434,7 @@ ecosys_coverage <- function(ecosys_m,            # ecosystem matrix
   
   ## Save for reference
   write_excel_csv(ecosys_summary, 
-                  file.path(temp_dir, "nacional", paste0(ecosys_type, "_ecosystem_coverage.csv")))
+                  file.path(temp_dir, "national", paste0(ecosys_type, "_ecosystem_coverage.csv")))
   
   
   ## Now make one in tidy format so we can filter matrix in main script
@@ -462,7 +464,7 @@ ecosys_coverage <- function(ecosys_m,            # ecosystem matrix
   
   ## Save dataframe for use in main prioritizr script
   write_excel_csv(ecosys_filtered_df,
-                  file.path(ipt_dir, "nacional", paste0(ecosys_type, "_ecosys_filtered.csv")))
+                  file.path(ipt_dir, "national", paste0(ecosys_type, "_ecosys_filtered.csv")))
   
   ## Return df if useful to examine or visualize
   return(ecosys_filtered_df)
@@ -474,12 +476,12 @@ ecosys_coverage <- function(ecosys_m,            # ecosystem matrix
 
 
 ## ------ Terrestrial -----------------------------------
-# NOTE: For now, just using excel sheet provided by Mesa Nacional.
+# NOTE: For now, just using excel sheet provided by Mesa national.
 # Once confirmed, may re-introduce code to more flexibly generate dataframe.
 
 scenarios_terra_df <- 
-  ## Read in excel file from Mesa Nacional
-  read_excel(file.path(ipt_dir, "nacional", "corridas_05062026.xlsx"), 
+  ## Read in excel file from Mesa national
+  read_excel(file.path(ipt_dir, "national", "corridas_05062026.xlsx"), 
              sheet = "Hoja1", skip = 1) %>% 
   janitor::clean_names() %>% 
   rename(
@@ -574,7 +576,7 @@ rm(feature_abbr); rm(include_abbr)
 
 
 ## ------ Eje Cafetero -----------------------------------
-# Read in spreadsheet shared by Mesa Nacional
+# Read in spreadsheet shared by Mesa national
 scenarios_ec_df <- 
   read_excel(file.path(ipt_dir, "sirap/eje_cafetero", "corridas_SIRAP_EC_16072026.xlsx")) %>% 
   janitor::clean_names() %>% 
@@ -601,7 +603,7 @@ scenarios_ec_df <-
 
 
 ## ------ Orinoquia -----------------------------------
-# Read in spreadsheet shared by Mesa Nacional
+# Read in spreadsheet shared by Mesa national
 scenarios_ori_df <- 
   read_excel(file.path(ipt_dir, "sirap/orinoquia", "corridas_SIRAP_ORI_16072026.xlsx")) %>% 
   janitor::clean_names() %>% 

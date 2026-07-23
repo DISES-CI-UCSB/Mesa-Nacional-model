@@ -13,14 +13,31 @@ pacman::p_load(       # automatically installs packages if needed
   sf,                 # vector functions
   purrr)              # faster lapply
 
-## Local directories
+## Create local directories
 temp_dir <- here("data/temp_outputs")     # Store intermediate/temporary outputs
 geo_dir <- here("data/model_input_lyrs")  # GeoTIFs of input layers used
 ipt_dir <- here("data/model_inputs")      # Inputs directly used in prioritizr model
 
-for (dir in c(temp_dir, geo_dir, ipt_dir)){
-  if (!dir.exists(dir)) dir.create(dir)
-} ; rm(dir)
+base_dirs <- c(temp_dir, geo_dir, ipt_dir)
+
+## Sub-directories based on model level/region
+sub_dirs  <- c("nacional", 
+               "sirap/eje_cafetero",
+               "sirap/orinoquia") 
+
+all_dirs <- c(
+  base_dirs,
+  as.vector(outer(base_dirs, sub_dirs, file.path))
+)
+
+## Creates all directories (if needed)
+for (dir in all_dirs){
+  if (!dir.exists(dir)) dir.create(dir, recursive = TRUE)
+}
+
+## Remove unneeded variables
+rm(dir, base_dirs, all_dirs)
+
 
 # ========== TEMPLATES ==============================================
 ## Use the MAGNA-SIRGAS/CTM-12 as it's official projection for Colombia
@@ -37,7 +54,9 @@ my_crs <- "EPSG:9377"
 
 ## If the template hasn't yet been created, then it will be. 
 ## Otherwise, save time and read in the existing template
-if (!file.exists(file.path(geo_dir, "template_terrestre.tif"))) {
+template_path <- file.path(geo_dir, "nacional", "template_terrestre.tif")
+
+if (!file.exists(template_path)) {
   ## Open raster from geodatabase
   iheh_r <- rast('OpenFileGDB:"data/costs/HEH_2022.gdb":IHEH') %>% 
     ## First put into CRS of interest, mostly preserving native resolution
@@ -50,21 +69,24 @@ if (!file.exists(file.path(geo_dir, "template_terrestre.tif"))) {
     ) %>% 
     ## Finally, make sure it's exactly 1km resolution
     project(., my_crs, method = "bilinear", res = 1000)
+  
   names(iheh_r) <- "IHEH_2022"
   
   ## Save raster as one of the model costs (IHEH2022)
-  writeRaster(iheh_r, file.path(geo_dir, "IHEH_2022.tif"), overwrite = TRUE)
+  writeRaster(iheh_r, 
+              file.path(geo_dir, "nacional", "IHEH_2022.tif"), 
+              overwrite = TRUE)
   
   ## Save terrestrial template as binary version
   template_terra <- iheh_r
   template_terra[!is.na(template_terra)] <- 1
   names(template_terra) <- "template_terrestre"
   writeRaster(template_terra, 
-              file.path(geo_dir, "template_terrestre.tif"), 
+              template_path, 
               overwrite = TRUE)
   
 } else {
-  template_terra <- rast(file.path(geo_dir, "template_terrestre.tif"))
+  template_terra <- rast(template_path)
 }
 
 ## Country outline for mapping
@@ -78,8 +100,10 @@ outline <- as.polygons(mask); rm(mask)
 # to generate a template raster (that makes sure all PUs have a cost).
 # Same as terrestrial, this template will define the PUs for marine model.
 
+template_path <- file.path(geo_dir, "nacional", "template_marino.tif")
+
 ## Only run all this code if needed (the first time)
-if (!file.exists(file.path(geo_dir, "template_marino.tif"))) {
+if (!file.exists(template_path)) {
   
   ### 1. Start with ecosystems -----------------------------------
   ## Read in shapefile
@@ -149,9 +173,10 @@ if (!file.exists(file.path(geo_dir, "template_marino.tif"))) {
   
   ## Save the marine ecosystems raster, and marine IDs CSV
   writeRaster(ecosys_mar_r, 
-              file.path(geo_dir, "ecosistemas_marinos.tif"), 
+              file.path(geo_dir, "nacional", "ecosistemas_marinos.tif"), 
               overwrite = TRUE)
-  write_csv(mar_df, file.path(geo_dir, "ecosistemas_IDs_marinos.csv"))
+  
+  write_csv(mar_df, file.path(geo_dir, "nacional", "ecosistemas_IDs_marinos.csv"))
   
   
   ## 2. Add in Mangroves -----------------------------------
@@ -170,7 +195,7 @@ if (!file.exists(file.path(geo_dir, "template_marino.tif"))) {
   
   ## Save mangroves raster
   writeRaster(manglares_r, 
-              file.path(geo_dir, "manglares.tif"), 
+              file.path(geo_dir, "nacional", "manglares.tif"), 
               overwrite = TRUE)
   
   
@@ -188,7 +213,7 @@ if (!file.exists(file.path(geo_dir, "template_marino.tif"))) {
   
   ## Save final marine template
   writeRaster(template_mar,
-              file.path(geo_dir, "template_marino.tif"),
+              template_path,
               overwrite = TRUE)
   
   
@@ -197,8 +222,10 @@ if (!file.exists(file.path(geo_dir, "template_marino.tif"))) {
      mar_df, mar_r, mar_sf, ecosys_mar_r, manglares_r, hm_r)
   
 } else {
-  template_mar <- rast(file.path(geo_dir, "template_marino.tif"))
+  template_mar <- rast(template_path)
 }
+
+rm(template_path)
 
 ## ------ Combined template -----------------------------------
 # # The combined template is empty (no values), since it is not used to define
@@ -221,6 +248,105 @@ if (!file.exists(file.path(geo_dir, "template_marino.tif"))) {
 # )
 # 
 # rm(combined_ext)
+
+
+## -------- SIRAPs ---------------------------------------------------
+# Make templates (serivng as planning units) for regional SIRAP models.
+# Each may differ in resolution. 
+
+### ------- Eje Cafetero ---------------
+# Using 300m resolution, roughly matching native res of IHEH2022 cost layer
+
+template_path <- file.path(geo_dir, "sirap/eje_cafetero", "template_eje_cafetero.tif")
+
+## If template hasn't yet been created, run
+if (!file.exists(template_path)) {
+  ## First get boundary of region
+  ec_v <- read_sf(file.path("data/sirap_actualizado/Territoriales_y_SIRAPs.shp")) %>%
+    filter(Tematico == "Eje Cafetero") %>%  # Only keep EC
+    st_union() %>%                          # Dissolve municipal boundaries
+    vect() %>%                              # terra obj to match rasters
+    project(., my_crs)                      # match projection
+    
+  ## Save this if needed
+  writeVector(ec_v, 
+              file.path(geo_dir, "sirap/eje_cafetero", "eje_cafetero.shp"),
+              overwrite = TRUE)
+  
+  
+  ## Now read in raw cost raster 
+  iheh_r <- rast('OpenFileGDB:"data/costs/HEH_2022.gdb":IHEH') %>% 
+    ## Match CRS, and slightly change resolution (~309m -> 300m)
+    project(., my_crs, method = "bilinear", res = 300) %>% 
+    ## Crop and mask to EC
+    crop(., ec_v, mask = TRUE)
+  
+  names(iheh_r) <- "IHEH_EC_2022"
+  
+  ## Save raster as one of the model costs (IHEH2022)
+  writeRaster(iheh_r, 
+              file.path(geo_dir, "sirap/eje_cafetero", "IHEH_EC_2022.tif"), 
+              overwrite = TRUE)
+  
+  ## Save template as binary version
+  template_ec <- iheh_r
+  template_ec[!is.na(template_ec)] <- 1
+  names(template_ec) <- "template_eje_cafetero"
+  writeRaster(template_ec, 
+              template_path, 
+              overwrite = TRUE)
+  
+} else {
+  template_ec <- rast(template_path)
+}
+
+
+### ------- Orinoquia ------------------
+# Using 500m resolution to balance computational load with better regional resolution
+
+template_path <- file.path(geo_dir, "sirap/orinoquia", "template_orinoquia.tif")
+
+if (!file.exists(template_path)) {
+  ## First get boundary of region
+  ori_v <- read_sf(file.path("data/sirap_actualizado/Territoriales_y_SIRAPs.shp")) %>% 
+    filter(Territoria == "DTOR") %>%  # Only keep Orinoquia
+    st_union() %>%                    # Dissolve municipal boundaries
+    vect() %>%                        # terra obj to match rasters
+    project(., my_crs)                # match projection
+  
+  ## Save this if needed
+  writeVector(ori_v, 
+              file.path(geo_dir, "sirap/orinoquia", "orinoquia.shp"),
+              overwrite = TRUE)
+
+  
+  ## Now read in raw cost raster 
+  iheh_r <- rast('OpenFileGDB:"data/costs/HEH_2022.gdb":IHEH') %>% 
+    ## Match CRS and change resolution to 500m
+    project(., my_crs, method = "bilinear", res = 500) %>% 
+    ## Crop and mask to orinoquia
+    crop(., ori_v, mask = TRUE)
+  
+  names(iheh_r) <- "IHEH_orinoquia_2022"
+  
+  ## Save raster as one of the model costs (IHEH2022)
+  writeRaster(iheh_r, 
+              file.path(geo_dir, "sirap/orinoquia", "IHEH_orinoquia_2022.tif"), 
+              overwrite = TRUE)
+  
+  ## Save template as binary version
+  template_ori <- iheh_r
+  template_ori[!is.na(template_ori)] <- 1
+  names(template_ori) <- "template_orinoquia"
+  writeRaster(template_ori, 
+              template_path, 
+              overwrite = TRUE)
+  
+} else {
+  template_ori <- rast(template_path)
+}
+
+rm(template_path)
 
 
 
@@ -269,17 +395,17 @@ ecosys_coverage <- function(ecosys_m,            # ecosystem matrix
   
   ## Read in RUNAP and OMEC matrices
   if (ecosys_type == "terrestrial") {
-    runap <- readRDS(file.path(ipt_dir, "runap_terrestres.rds"))[ids, ] == 1
+    runap <- readRDS(file.path(ipt_dir, "nacional", "runap_terrestres.rds"))[ids, ] == 1
     runap[is.na(runap)] <- FALSE
     
-    omec <- readRDS(file.path(ipt_dir, "omec_terrestres.rds"))[ids, ] == 1
+    omec <- readRDS(file.path(ipt_dir, "nacional", "omec_terrestres.rds"))[ids, ] == 1
     omec[is.na(omec)] <- FALSE
     
   } else if (ecosys_type == "marine") {
-    runap <- readRDS(file.path(ipt_dir, "runap_marinos.rds"))[ids, ] == 1
+    runap <- readRDS(file.path(ipt_dir, "nacional", "runap_marinos.rds"))[ids, ] == 1
     runap[is.na(runap)] <- FALSE
     
-    omec <- readRDS(file.path(ipt_dir, "omec_marinos.rds"))[ids, ] == 1
+    omec <- readRDS(file.path(ipt_dir, "nacional", "omec_marinos.rds"))[ids, ] == 1
     omec[is.na(omec)] <- FALSE
   }
 
@@ -306,7 +432,7 @@ ecosys_coverage <- function(ecosys_m,            # ecosystem matrix
   
   ## Save for reference
   write_excel_csv(ecosys_summary, 
-            file.path(temp_dir, paste0(ecosys_type, "_ecosystem_coverage.csv")))
+                  file.path(temp_dir, "nacional", paste0(ecosys_type, "_ecosystem_coverage.csv")))
   
   
   ## Now make one in tidy format so we can filter matrix in main script
@@ -335,8 +461,8 @@ ecosys_coverage <- function(ecosys_m,            # ecosystem matrix
     select(-any_of(meets_cols))
   
   ## Save dataframe for use in main prioritizr script
-  write_excel_csv(ecosys_filtered_df, 
-            file.path(ipt_dir, paste0(ecosys_type, "_ecosys_filtered.csv")))
+  write_excel_csv(ecosys_filtered_df,
+                  file.path(ipt_dir, "nacional", paste0(ecosys_type, "_ecosys_filtered.csv")))
   
   ## Return df if useful to examine or visualize
   return(ecosys_filtered_df)
@@ -344,7 +470,7 @@ ecosys_coverage <- function(ecosys_m,            # ecosystem matrix
 
 
 # ========== MODEL SCENARIOS =================================================
-# Create a dataframe with all model scenario permutations
+# Create a dataframe with parameters for each model scenario
 
 
 ## ------ Terrestrial -----------------------------------
@@ -353,7 +479,7 @@ ecosys_coverage <- function(ecosys_m,            # ecosystem matrix
 
 scenarios_terra_df <- 
   ## Read in excel file from Mesa Nacional
-  read_excel(file.path(ipt_dir, "corridas_05062026.xlsx"), 
+  read_excel(file.path(ipt_dir, "nacional", "corridas_05062026.xlsx"), 
              sheet = "Hoja1", skip = 1) %>% 
   janitor::clean_names() %>% 
   rename(
@@ -367,7 +493,7 @@ scenarios_terra_df <-
   ) %>% 
   mutate(
     includes = map(includes, ~ if (.x == "RUNAP y OMEC") c("RUNAP", "OMEC") else c("RUNAP"))
-  ) %>% 
+    ) %>% 
   ## Don't need these columns
   select(-starts_with("atributo"), -id) %>% 
   ## Species national responsibility targets are variable, 
@@ -446,3 +572,48 @@ scenarios_mar_df <- expand.grid(
 ## Only want dataframe
 rm(feature_abbr); rm(include_abbr)
 
+
+## ------ Eje Cafetero -----------------------------------
+# Read in spreadsheet shared by Mesa Nacional
+scenarios_ec_df <- 
+  read_excel(file.path(ipt_dir, "sirap/eje_cafetero", "corridas_SIRAP_EC_16072026.xlsx")) %>% 
+  janitor::clean_names() %>% 
+  rename(
+    strat_ecos_target = umbral_3,
+    bs_target = umbral_5,
+    hum_target = umbral_7,
+    includes = figuras_de_manejo, 
+    cost = costo
+  ) %>% 
+  mutate(
+    ## make list
+    includes = map(includes, ~ if (.x == "RUNAP y OMEC") c("RUNAP", "OMEC") else c("RUNAP")),
+    ## remove NAs
+    bs_target = case_when(
+      is.na(bs_target) ~ 0,
+      .default = bs_target
+    )
+  ) %>% 
+  ## Don't need these columns
+  select(-starts_with("atributo"), -id) %>% 
+  ## Remove duplicate scenarios
+  distinct()
+
+
+## ------ Orinoquia -----------------------------------
+# Read in spreadsheet shared by Mesa Nacional
+scenarios_ori_df <- 
+  read_excel(file.path(ipt_dir, "sirap/orinoquia", "corridas_SIRAP_ORI_16072026.xlsx")) %>% 
+  janitor::clean_names() %>% 
+  rename(
+    strat_ecos_target = umbral_3,
+    cong_target = umbral_5,
+    includes = figuras_de_manejo, 
+    cost = costo
+  ) %>% 
+  mutate(
+    ## make list
+    includes = map(includes, ~ if (.x == "RUNAP y OMEC") c("RUNAP", "OMEC") else c("RUNAP"))
+    ) %>% 
+  ## Don't need these columns
+  select(-starts_with("atributo"), -id)

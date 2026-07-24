@@ -70,9 +70,8 @@ if (!file.exists(template_path)) {
       na.rm = TRUE
     ) %>% 
     ## Finally, make sure it's exactly 1km resolution
-    project(., my_crs, method = "bilinear", res = 1000)
-  
-  names(iheh_r) <- "IHEH_2022"
+    project(., my_crs, method = "bilinear", res = 1000) %>% 
+    setNames("IHEH_2022")
   
   ## Save raster as one of the model costs (IHEH2022)
   writeRaster(iheh_r, 
@@ -160,8 +159,8 @@ if (!file.exists(template_path)) {
     ecosys_mar_r <- rasterize(missing_patches,
                               ecosys_mar_r,
                               field = "biome_id",
-                              update = TRUE)  # preserves existing values
-    names(ecosys_mar_r) <- "ecosistemas_marino"
+                              update = TRUE) %>% # preserves existing values
+      setNames("ecosistemas_marino")
     
     ## Verify all biomes now present
     final_ids <- unique(na.omit(values(ecosys_mar_r)))
@@ -187,8 +186,8 @@ if (!file.exists(template_path)) {
     file.path("data/features/MANGLARES_COLOMBIA/MANGLARES_COLOMBIA.shp")) %>%
     st_transform(crs(template_mar)) %>%
     vect() %>%
-    rasterize(., template_mar)
-  names(manglares_r) <- "manglares"
+    rasterize(., template_mar) %>% 
+    setNames("manglares")
   
   ## Add pixels with values to marine template, then make all values of 1
   template_mar <- cover(template_mar, manglares_r)
@@ -281,9 +280,8 @@ if (!file.exists(template_path)) {
     ## Match CRS, and slightly change resolution (~309m -> 300m)
     project(., my_crs, method = "bilinear", res = 300) %>% 
     ## Crop and mask to EC
-    crop(., ec_v, mask = TRUE)
-  
-  names(iheh_r) <- "IHEH_EC_2022"
+    crop(., ec_v, mask = TRUE) %>% 
+    setNames("IHEH_EC_2022")
   
   ## Save raster as one of the model costs (IHEH2022)
   writeRaster(iheh_r, 
@@ -327,9 +325,8 @@ if (!file.exists(template_path)) {
     ## Match CRS and change resolution to 500m
     project(., my_crs, method = "bilinear", res = 500) %>% 
     ## Crop and mask to orinoquia
-    crop(., ori_v, mask = TRUE)
-  
-  names(iheh_r) <- "IHEH_orinoquia_2022"
+    crop(., ori_v, mask = TRUE) %>% 
+    setNames("IHEH_orinoquia_2022")
   
   ## Save raster as one of the model costs (IHEH2022)
   writeRaster(iheh_r, 

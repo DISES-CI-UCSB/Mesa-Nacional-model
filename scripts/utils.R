@@ -538,8 +538,6 @@ scenarios_terra_df <- scenarios_terra_df %>%
     )
   )
 
-rm(feature_abbr)
-
 
 ## ------ Marine -----------------------------------
 feature_abbr <- c(
@@ -568,8 +566,7 @@ scenarios_mar_df <- expand.grid(
     )
   )
 
-## Only want dataframe
-rm(feature_abbr); rm(include_abbr)
+rm(include_abbr)
 
 
 ## ------ Eje Cafetero -----------------------------------
@@ -586,18 +583,46 @@ scenarios_ec_df <-
     cost = costo
   ) %>% 
   mutate(
-    ## make list
+    ## Make locked-in areas a list
     includes = map(includes, ~ if (.x == "RUNAP y OMEC") c("RUNAP", "OMEC") else c("RUNAP")),
-    ## remove NAs
-    bs_target = case_when(
-      is.na(bs_target) ~ 0,
-      .default = bs_target
-    )
   ) %>% 
   ## Don't need these columns
   select(-starts_with("atributo"), -id) %>% 
   ## Remove duplicate scenarios
   distinct()
+
+
+feature_abbr <- c(
+  strat_ecos_target = "Estr",
+  bs_target = "Bs",
+  hum_target = "HuEC"
+)
+
+build_model_name <- function(strat_ecos_target, bs_target, hum_target, includes, cost) {
+  parts <- c(
+    if (strat_ecos_target != 0) paste0(feature_abbr["strat_ecos_target"], strat_ecos_target),
+    if (!is.na(bs_target)) paste0(feature_abbr["bs_target"], bs_target),
+    if (hum_target != 0) paste0(feature_abbr["hum_target"], hum_target)
+  )
+  feature_str <- paste(parts, collapse = "+")
+  
+  includes_names <- unlist(includes)
+  includes_str <- if ("OMEC" %in% includes_names) {
+    "RUNAP+OMEC"
+  } else {
+    "RUNAP"
+  }
+  
+  paste0(feature_str, "+", includes_str, "_", cost)
+}
+
+scenarios_ec_df <- scenarios_ec_df %>%
+  mutate(
+    model_name = pmap_chr(
+      list(strat_ecos_target, bs_target, hum_target, includes, cost),
+      build_model_name
+    )
+  )
 
 
 ## ------ Orinoquia -----------------------------------
@@ -614,7 +639,46 @@ scenarios_ori_df <-
   ) %>% 
   mutate(
     ## make list
-    includes = map(includes, ~ if (.x == "RUNAP y OMEC") c("RUNAP", "OMEC") else c("RUNAP"))
+    includes = map(includes, ~ if (.x == "RUNAP y OMEC") c("RUNAP", "OMEC") else c("RUNAP")),
+    ## Add savanna targets (right now just 17%... might change)
+    sab_target = 17,
+    .before = includes
     ) %>% 
   ## Don't need these columns
   select(-starts_with("atributo"), -id)
+
+
+feature_abbr <- c(
+  strat_ecos_target = "Estr",
+  cong_target = "Cong",
+  sab_target = "Sab"
+)
+
+build_model_name <- function(strat_ecos_target, cong_target, sab_target, includes, cost) {
+  parts <- c(
+    if (strat_ecos_target != 0) paste0(feature_abbr["strat_ecos_target"], strat_ecos_target),
+    if (cong_target != 0) paste0(feature_abbr["cong_target"], cong_target),
+    if (sab_target != 0) paste0(feature_abbr["sab_target"], sab_target)
+  )
+  feature_str <- paste(parts, collapse = "+")
+  
+  includes_names <- unlist(includes)
+  includes_str <- if ("OMEC" %in% includes_names) {
+    "RUNAP+OMEC"
+  } else {
+    "RUNAP"
+  }
+  
+  paste0(feature_str, "+", includes_str, "_", cost)
+}
+
+scenarios_ori_df <- scenarios_ori_df %>%
+  mutate(
+    model_name = pmap_chr(
+      list(strat_ecos_target, cong_target, sab_target, includes, cost),
+      build_model_name
+    )
+  )
+
+## Remove unneeded objects/fxns from environment
+rm(feature_abbr, build_model_name)

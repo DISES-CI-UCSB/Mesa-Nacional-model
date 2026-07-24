@@ -479,7 +479,7 @@ ecosys_coverage <- function(ecosys_m,            # ecosystem matrix
 scenarios_terra_df <- 
   ## Read in excel file from Mesa national
   read_excel(file.path(ipt_dir, "national", "corridas_05062026.xlsx"), 
-             sheet = "Hoja1", skip = 1) %>% 
+             sheet = "Hoja1", skip = 1, .name_repair = "unique_quiet") %>% 
   janitor::clean_names() %>% 
   rename(
     ecos_target = umbral_3,
@@ -575,7 +575,8 @@ rm(feature_abbr); rm(include_abbr)
 ## ------ Eje Cafetero -----------------------------------
 # Read in spreadsheet shared by Mesa national
 scenarios_ec_df <- 
-  read_excel(file.path(ipt_dir, "sirap/eje_cafetero", "corridas_SIRAP_EC_16072026.xlsx")) %>% 
+  read_excel(file.path(ipt_dir, "sirap/eje_cafetero", "corridas_SIRAP_EC_16072026.xlsx"),
+             .name_repair = "unique_quiet") %>% 
   janitor::clean_names() %>% 
   rename(
     strat_ecos_target = umbral_3,
@@ -602,7 +603,8 @@ scenarios_ec_df <-
 ## ------ Orinoquia -----------------------------------
 # Read in spreadsheet shared by Mesa national
 scenarios_ori_df <- 
-  read_excel(file.path(ipt_dir, "sirap/orinoquia", "corridas_SIRAP_ORI_16072026.xlsx")) %>% 
+  read_excel(file.path(ipt_dir, "sirap/orinoquia", "corridas_SIRAP_ORI_16072026.xlsx"),
+             .name_repair = "unique_quiet") %>% 
   janitor::clean_names() %>% 
   rename(
     strat_ecos_target = umbral_3,

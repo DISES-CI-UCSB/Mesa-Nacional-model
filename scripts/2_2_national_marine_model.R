@@ -1,20 +1,20 @@
-## script: Marine Prioritization
+## script: National Marine Model
 ## Purpose: Set parameters and run marine prioritization national models for Colombia
 
 # ========== SETTING UP =======================================================
-## load packages
-library(prioritizr)  # modeling package
-library(gurobi)      # solver
-library(Matrix)      # using sparse matrices
-library(purrr)       # run models over list
-
-## Load required functions and objects
+## Get functions and data
 source("scripts/utils.R")
+
+## Load/install packages 
+pacman::p_load(  # automatically installs packages if needed
+  prioritizr,    # modeling package
+  gurobi,        # solver
+  Matrix)        # Matrices
 
 ## Set seed and directories
 set.seed(500)
 
-ipt_dir <- here("data/model_inputs")
+ipt_dir <- here("data/model_inputs/national")
 opt_dir <- here("results/national/marine")
 
 for (dir in c(ipt_dir, opt_dir)){
@@ -26,7 +26,23 @@ for (dir in c(ipt_dir, opt_dir)){
 ## Wrapping all the model building and running inside a function 
 ## to easily run over a list of scenarios.
 
-marine_model <- function(target, includes, features, model_name) {
+#' @param target Numeric. Target percentage (0-100) for all the features. 
+#' @param includes Character vector. Which layers should be "locked-in" to the 
+#'   solution (e.g. "RUNAP", "OMEC").
+#' @param features Character vector. Which layers are include as a feature to
+#'   be evaluated in the problem (i.e. "ecosystems", "mangroves")
+#' @param model_name Character. Unique identifier for this scenario, used 
+#'   for output file names and logging.
+#' @param skip_presolve Logical. If TRUE, skip the presolve check and 
+#'   attempt to solve regardless. Default FALSE.
+#' @param force_s Logical. If TRUE, force gurobi to return a solution even 
+#'   if the presolve/solve process raises non-fatal warnings. Passed to 
+#'   solve(p, force = force_s). Default TRUE
+#'
+#' @return NULL (invisibly). Writes solution raster and summary CSVs to 
+#'   opt_dir for each solution. Also creates and appends log of failed scenarios.
+marine_model <- function(target, includes, features, model_name, 
+                         skip_presolve = FALSE, force_s = TRUE) {
   ## Print scenario and time of start
   message("Running scenario: ", model_name, 
           "\nRun start: ", format(Sys.time(), "%H:%M:%S"))
@@ -133,15 +149,15 @@ marine_model <- function(target, includes, features, model_name) {
     add_locked_in_constraints(locked_in) %>%
     add_binary_decisions() %>% 
     add_boundary_penalties(penalty = 0.001, data = boundaries) %>% 
-    add_gurobi_solver(gap = 0.05, threads = 15, verbose = TRUE)
+    add_gurobi_solver(gap = 0.05, threads = 15, verbose = FALSE)
   
   ## If problem fails presolve check, note it and skip to next
   log_file <- file.path(opt_dir, "failed_scenarios.txt")
   
   s <- tryCatch({
-    if (!presolve_check(p))
+    if (!skip_presolve && !presolve_check(p))
       stop(paste("Presolve check failed for scenario:", model_name))
-    solve(p, force = TRUE) 
+    solve(p, force = force_s)
   }, error = function(e) {
     message("Skipping ", model_name, ": ", e$message)
     write(paste(Sys.time(), model_name, e$message, sep = " | "), 
@@ -260,31 +276,29 @@ marine_model <- function(target, includes, features, model_name) {
 
 
 # ========== RUN PRIORITIZATION ==============================================
-## If process stopped part-way, remove scenarios already completed or permanently failed
-completed_list <- file.path(opt_dir, "master_eval_summary.csv")
-failed_list    <- file.path(opt_dir, "failed_scenarios.txt")
-
-if (file.exists(completed_list)) {
-  completed <- read_csv(completed_list)
-  scenarios_mar_df <- scenarios_mar_df %>%
-    filter(!model_name %in% completed$scenario)
-  rm(completed)
-}
-
-if (file.exists(failed_list)) {
-  failed <- read.table(failed_list, sep = "|",
-                       col.names = c("time", "model_name", "error"),
-                       strip.white = TRUE) %>%
-    ## remove memory errors for now
-    filter(error == "Error 10001: Out of memory")
-  failed_list <- unique(failed$model_name)
-  scenarios_mar_df <- scenarios_mar_df %>%
-    filter(!model_name %in% failed_list)
-  rm(failed); rm(failed_list)
-}
+# ## If process stopped part-way, remove scenarios already completed or permanently failed
+# completed_list <- file.path(opt_dir, "master_eval_summary.csv")
+# failed_list    <- file.path(opt_dir, "failed_scenarios.txt")
+# 
+# if (file.exists(completed_list)) {
+#   completed <- read_csv(completed_list)
+#   scenarios_mar_df <- scenarios_mar_df %>%
+#     filter(!model_name %in% completed$scenario)
+#   rm(completed)
+# }
+# 
+# if (file.exists(failed_list)) {
+#   failed <- read.table(failed_list, sep = "|",
+#                        col.names = c("time", "model_name", "error"),
+#                        strip.white = TRUE)
+#   failed_list <- unique(failed$model_name)
+#   scenarios_mar_df <- scenarios_mar_df %>%
+#     filter(!model_name %in% failed_list)
+#   rm(failed); rm(failed_list)
+# }
 
 ## Generate model over list of scenarios
-purrr::pmap(scenarios_mar_df, marine_model)
+purrr::pmap(scenarios_mar_df, marine_model, force_s = TRUE)
 
 
 

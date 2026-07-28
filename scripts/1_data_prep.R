@@ -371,9 +371,15 @@ strat_eco_prep <- function(geo_level) {
     setNames("paramos")
   
   ## Save raster
-  writeRaster(paramos_r, 
-              file.path(geo_dir, dir, "paramos.tif"), 
-              overwrite = TRUE)
+  if (geo_level != "terrestres") {
+    writeRaster(paramos_r, 
+                file.path(geo_dir, dir, sprintf("paramos_%s.tif", geo_level)), 
+                overwrite = TRUE)
+  } else {
+    writeRaster(paramos_r, 
+                file.path(geo_dir, dir, "paramos.tif"), 
+                overwrite = TRUE)
+  }
   
   ## Convert to matrix
   paramos_v <- as.matrix(paramos_r)
@@ -387,9 +393,15 @@ strat_eco_prep <- function(geo_level) {
     rasterize(., template) %>% 
     setNames("bosque_seco")
   
-  writeRaster(bosque_seco_r, 
-              file.path(geo_dir, dir, "bosque_seco.tif"), 
-              overwrite = TRUE)
+  if (geo_level != "terrestres") {
+    writeRaster(bosque_seco_r, 
+                file.path(geo_dir, dir, sprintf("bosque_seco_%s.tif", geo_level)), 
+                overwrite = TRUE)
+  } else {
+    writeRaster(bosque_seco_r, 
+                file.path(geo_dir, dir, "bosque_seco.tif"), 
+                overwrite = TRUE)
+  }
   
   ## Convert to matrix
   bosque_seco_v <- as.matrix(bosque_seco_r)
@@ -567,30 +579,6 @@ eco_terra_filtered <- ecosys_coverage(ecosys_mat,
 #   labs(x = "Ecosystem Area (km2)",
 #        y = "Number of Ecosystems")
 
-###---------------------------- Savannas ---------------------------------------
-## For Orinoquia, only want to keep savanna ecosystems
-sabana_r <- ecosys_sf %>% 
-  filter(ecos_sinte == "Sabana") %>% 
-  ## In case they want to differentiate between seasonal and floodable savannas
-  mutate(sab_type = case_when(
-    ecos_gener == "Sabana Estacional" ~ 1,
-    ecos_gener == "Sabana Inundable" ~ 2
-  )) %>% 
-  vect() %>% 
-  rasterize(template_ori, field = "sab_type") %>% 
-  mask(., template_ori) %>% 
-  setNames("sabana_orinoquia")
-
-## Save raster
-writeRaster(sabana_r, 
-            file.path(geo_dir, "sirap/orinoquia", "sabana_orinoquia.tif"),
-            overwrite = TRUE)
-
-## Create matrix and save
-sabana_v <- as.matrix(sabana_r)
-sabana_v[is.na(sabana_v)] <- 0
-saveRDS(sabana_v, file.path(ipt_dir, "sirap/orinoquia", "sabana_orinoquia.rds"))
-
 
 ###----------------------------- Marine ---------------------------------------
 # The shapefile is already rasterized and saved in `utils.R`
@@ -646,6 +634,54 @@ eco_mar_filtered <- ecosys_coverage(ecosys_mar_mat,
 #   )+
 #   labs(x = "Ecosystem Area (km2)",
 #        y = "Number of Ecosystems")
+
+
+
+###---------------------------- Orinoquia ---------------------------------------
+# Ecosystem data specific to Orinoquia runs
+
+#### Savannas ---------------------------------------
+## Isolate only savanna ecosystems from full dataset
+sabana_r <- ecosys_sf %>% 
+  filter(ecos_sinte == "Sabana") %>% 
+  ## In case they want to differentiate between seasonal and floodable savannas
+  mutate(sab_type = case_when(
+    ecos_gener == "Sabana Estacional" ~ 1,
+    ecos_gener == "Sabana Inundable" ~ 2
+  )) %>% 
+  vect() %>% 
+  rasterize(., template_ori, field = "sab_type") %>% 
+  mask(., template_ori) %>% 
+  setNames("sabana_orinoquia")
+
+## Save raster
+writeRaster(sabana_r, 
+            file.path(geo_dir, "sirap/orinoquia", "sabana_orinoquia.tif"),
+            overwrite = TRUE)
+
+## Create matrix and save
+sabana_v <- as.matrix(sabana_r)
+sabana_v[is.na(sabana_v)] <- 0
+saveRDS(sabana_v, file.path(ipt_dir, "sirap/orinoquia", "sabana_orinoquia.rds"))
+
+
+#### Congriales ---------------------------------
+## Read in shapefile and rasterize
+cong_r <- read_sf(file.path(features, "Congriales_Orinoquia", "Congriales_Ventanas_fin.shp")) %>% 
+  vect() %>% 
+  project(., my_crs) %>% 
+  rasterize(., template_ori) %>% 
+  setNames("congriales")
+
+## Save raster
+writeRaster(cong_r, 
+            file.path(geo_dir, "sirap/orinoquia", "congriales.tif"),
+            overwrite = TRUE)
+
+## Create matrix and save
+cong_v <- as.matrix(cong_r)
+cong_v[is.na(cong_v)] <- 0
+saveRDS(cong_v, file.path(ipt_dir, "sirap/orinoquia", "congriales.rds"))
 
 
 ##------------------------------ BioModelos -----------------------------------

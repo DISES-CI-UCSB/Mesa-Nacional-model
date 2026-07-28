@@ -46,7 +46,7 @@ template <- template_ori
 #' @return NULL (invisibly). Writes solution raster and summary CSVs to 
 #'   opt_dir for each solution. Also creates and appends log of failed scenarios.
 
-eje_model <- function(strat_ecos_target, cong_target, sab_target, includes, cost, 
+ori_model <- function(strat_ecos_target, cong_target, sab_target, includes, cost, 
                       model_name, skip_presolve = FALSE, force_s = FALSE) { 
   ## Print scenario and time of start
   message("Running scenario: ", model_name, 
@@ -259,5 +259,5 @@ eje_model <- function(strat_ecos_target, cong_target, sab_target, includes, cost
 # }
 
 ## Generate model over list of scenarios
-purrr::pmap(scenarios_ec_df, eje_model, skip_presolve = TRUE, force_s = TRUE)
+purrr::pmap(scenarios_ori_df, ori_model, skip_presolve = TRUE, force_s = TRUE)
 

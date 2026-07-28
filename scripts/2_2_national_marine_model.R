@@ -17,9 +17,10 @@ set.seed(500)
 ipt_dir <- here("data/model_inputs/national")
 opt_dir <- here("results/national/marine")
 
-for (dir in c(ipt_dir, opt_dir)){
-  if (!dir.exists(dir)) dir.create(dir, recursive = TRUE) 
-}; rm(dir)
+if (!dir.exists(opt_dir)) dir.create(opt_dir, recursive = TRUE)
+
+## Use specific template for model
+template <- template_mar
 
 
 # ========== PRIORITZATION FUNCTION ============================================
@@ -52,7 +53,7 @@ marine_model <- function(target, includes, features, model_name,
   pus <- readRDS(file.path(ipt_dir, "huella_humana_marina.rds"))
   
   ## Get list of all non-NA cells (each cell == planning unit)
-  ids <- cells(template_mar)
+  ids <- cells(template)
   n_pus <- length(ids) # number of planning units
   
   pus <- pus[ids, ]
@@ -135,7 +136,7 @@ marine_model <- function(target, includes, features, model_name,
   
   # --------- SET PROBLEM -------------------------------------------------
   ## Boundary penalties
-  boundaries <- prioritizr::boundary_matrix(template_mar)[ids, ids]
+  boundaries <- prioritizr::boundary_matrix(template)[ids, ids]
   boundaries <- boundaries/max(boundaries) #scaling issue
   
   
@@ -177,7 +178,7 @@ marine_model <- function(target, includes, features, model_name,
   write_csv(target_coverage, file.path(opt_dir, paste0(model_name, "_summary.csv")))
   
   ## Rasterize solution and save
-  s_rast <- rasterize_soln(s, template_mar, locked_in, ids)
+  s_rast <- rasterize_soln(s, template, locked_in, ids)
   writeRaster(s_rast,
               file.path(opt_dir, paste0(model_name, ".tif")),
               overwrite = TRUE)

@@ -206,7 +206,7 @@ ori_model <- function(strat_ecos_target, cong_target, sab_target, includes, cost
     n_new_protection = get_freq(freq_tbl, "Priority area"),
     n_locked_in = get_freq(freq_tbl, "Locked in"),
     cost = cost_summary$cost,
-    pct_targets_met = mean(target_coverage_full$met, na.rm = TRUE) * 100
+    pct_targets_met = mean(target_coverage$met, na.rm = TRUE) * 100
   )
   
   # Append eval_summary row to master CSV

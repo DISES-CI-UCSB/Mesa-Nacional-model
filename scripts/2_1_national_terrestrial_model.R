@@ -2,23 +2,24 @@
 ## Purpose: Set the parameters and run the terrestrial national prioritization models for Colombia
 
 # ========== SETTING UP =======================================================
-## Load packages
-library(prioritizr)  # modeling package
-library(gurobi)      # solver
-library(Matrix)      # using sparse matrices
-
 ## Load required functions and objects
 source("scripts/utils.R")
 
-## Set seed and directories
+## Load/install additional packages 
+pacman::p_load(  # automatically installs packages if needed
+  prioritizr,    # modeling package
+  gurobi,        # solver
+  Matrix)        # Matrices
+
+## Set seed and directories used in this script
 set.seed(500)
-ipt_dir <- here("data/model_inputs")
+ipt_dir <- here("data/model_inputs/national") 
 opt_dir <- here("results/national/terrestrial")
 
-for (dir in c(ipt_dir, opt_dir)){
-  if (!dir.exists(dir)) dir.create(dir, recursive = TRUE)  # Create directories if needed
-}; rm(dir)
+if (!dir.exists(opt_dir)) dir.create(opt_dir, recursive = TRUE)
 
+## Use specific template for model
+template <- template_terra
 
 # ========== PRIORITZATION FUNCTION ============================================
 # Wrapping all the model building and running inside a function to easily run over a list of scenarios.
@@ -63,7 +64,7 @@ terrestrial_model <- function(ecos_target, strat_ecos_target, sp_rep_target,
   }
   
   ## Get list of all non-NA cells (each cell == planning unit)
-  ids <- cells(template_terra)
+  ids <- cells(template)
   n_pus <- length(ids) # number of planning units
   
   pus <- pus[ids, ]
@@ -255,7 +256,7 @@ terrestrial_model <- function(ecos_target, strat_ecos_target, sp_rep_target,
   
   # --------- SET PROBLEM -------------------------------------------------
   ## Boundary penalties
-  boundaries <- prioritizr::boundary_matrix(template_terra)[ids, ids]
+  boundaries <- prioritizr::boundary_matrix(template)[ids, ids]
   boundaries <- boundaries/max(boundaries) #scaling issue
   
   
@@ -269,7 +270,8 @@ terrestrial_model <- function(ecos_target, strat_ecos_target, sp_rep_target,
     add_locked_in_constraints(locked_in) %>%
     add_binary_decisions() %>% 
     add_boundary_penalties(penalty = 0.001, data = boundaries) %>% 
-    add_gurobi_solver(gap = 0.05, threads = 15, verbose = TRUE)
+    ## NOTE: change threads and node_file_start depending on computer config
+    add_gurobi_solver(gap = 0.05, threads = 2, verbose = TRUE, node_file_start = 8)
   
   ## If problem fails presolve check, note it and skip to next
   log_file <- file.path(opt_dir, "failed_scenarios.txt")
@@ -298,7 +300,7 @@ terrestrial_model <- function(ecos_target, strat_ecos_target, sp_rep_target,
   write_csv(target_coverage, file.path(opt_dir, paste0(model_name, "_summary.csv")))
 
   ## Rasterize solution and save
-  s_rast <- rasterize_soln(s, template_terra, locked_in, ids)
+  s_rast <- rasterize_soln(s, template, locked_in, ids)
   writeRaster(s_rast,
               file.path(opt_dir, paste0(model_name, ".tif")),
               overwrite = TRUE)
@@ -403,7 +405,7 @@ terrestrial_model <- function(ecos_target, strat_ecos_target, sp_rep_target,
         add_locked_in_constraints(locked_in_p2) %>%
         add_binary_decisions() %>% 
         add_boundary_penalties(penalty = 0.001, data = boundaries) %>% 
-        add_gurobi_solver(gap = 0.05, threads = 15, verbose = FALSE)
+        add_gurobi_solver(gap = 0.05, threads = 2, verbose = FALSE, node_file_start = 16)
       
       ## Always force this problem
       s2 <- solve(p2, force = TRUE)
@@ -422,7 +424,7 @@ terrestrial_model <- function(ecos_target, strat_ecos_target, sp_rep_target,
       ## Replace original solution; Rasterize & save!
       s <- s2; rm(p2, s2, summary_1, summary_2)
       
-      s_rast <- rasterize_soln(s, template_terra, locked_in, ids)
+      s_rast <- rasterize_soln(s, template, locked_in, ids)
       writeRaster(s_rast,
                   file.path(opt_dir, paste0(model_name, ".tif")),
                   overwrite = TRUE)
@@ -683,6 +685,3 @@ if (file.exists(failed_list)) {
 
 ## Rerun and force solutions
 purrr::pmap(rerun_df, terrestrial_model, skip_presolve = TRUE, force_s = TRUE)
-
-
-

@@ -451,10 +451,12 @@ strat_eco_prep <- function(geo_level) {
                 file.path(geo_dir, dir, "humedales_EC.shp"),
                 overwrite = TRUE)
     
-    ## Rasterize and save
-    hum_ec_r <- rasterize(hum_ec_v, template) %>% 
+    ## Rasterize: some polygons are very small, so maximize represntivity
+    ## in raster by using `touches = TRUE`
+    hum_ec_r <- rasterize(hum_ec_v, template, touches = TRUE) %>% 
       setNames("humedales_eje_cafetero")
     
+    ## Save raster
     writeRaster(hum_ec_r,
                 file.path(geo_dir, dir, "humedales_EC.tif"),
                 overwrite = TRUE)
@@ -1254,4 +1256,72 @@ for (current_class in classes) {
   saveRDS(vmat, file.path(ipt_dir, "national", sprintf("%s.rds", current_class)))
   rm(vmat)
 }
+
+
+
+
+
+# ================================ MISC ====================================
+# These are data currently only used for visualization in the tool, not
+# used within the prioritizr model. 
+
+viz_path <- file.path("data/visualization")
+
+
+### ----------------------------- ZRC  --------------------------------------
+# Zonas de Reserva Campesina Constituida
+
+## Read in shapefile and transform to project CRS
+zrc_v <- 
+  vect(file.path(viz_path, 
+                    "Zona_de_Reserva_Campesina_Constituida", 
+                    "Zona_de_Reserva_Campesina_Constituida.shp")) %>% 
+  project(., my_crs)
+
+## Save
+writeVector(zrc_v, file.path(temp_dir, "zona_de_reserva_campesina.shp"))
+
+
+### --------------------------- RAMSAR -------------------------------------
+# Internationally recognized important wetlands
+
+## Read in, transform to project CRS, and save
+ramsar_v <- vect(file.path(viz_path, "RAMSAR/RAMSAR.shp")) %>% 
+  project(., my_crs)
+
+writeVector(ramsar_v, file.path(temp_dir, "ramsar_colombia.shp"))
+
+
+### --------------------- Reserva Biosfera ---------------------------------
+# UNESCO Biosphere reserves
+
+## Read in, transform, and save
+biosfera_v <- vect(file.path(viz_path, "reserva_biosfera/Reserva_Biosfera.shp")) %>% 
+  project(., my_crs)
+
+writeVector(biosfera_v, file.path(temp_dir, "reserva_biosfera_colombia.shp"))
+            
+            
+### -------------- Reservas Forestales (Ley 2da de 1959) ----------------
+# The link provided for this dataset had to be downloaded by using an 
+# ArcGIS portal. 
+
+ley2_v <- read_sf(file.path(viz_path, "reservas_forestales/reservas.shp")) %>% 
+  st_make_valid() %>% 
+  vect() %>% 
+  project(., my_crs)
+
+writeVector(ley2_v, file.path(temp_dir, "reservas_forestales_ley2da.shp"))
+
+
+### -------------- AICAS y KBAs ----------------
+# Still waiting on access to data!
+
+
+
+
+
+
+
+
 

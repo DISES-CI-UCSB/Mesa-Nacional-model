@@ -103,7 +103,7 @@ terrestrial_model <- function(ecos_target, strat_ecos_target, sp_rep_target,
   ## All ecosystems
   if (ecos_target != 0) {
     ## Read in matrix
-    ecosys_v <- readRDS(file.path(ipt_dir, "ecosistemas_IAVH_2024.rds"))
+    ecosys_v <- readRDS(file.path(ipt_dir, "ecosistemas_IAVH_2024_terrestres.rds"))
     ecosys_v <- t(ecosys_v) %>% as("dgCMatrix") # transpose [rows == ecosystem, columns == cell]
     ecosys_v <- ecosys_v[, ids] # only keep cells in PUs
     
@@ -318,7 +318,8 @@ terrestrial_model <- function(ecos_target, strat_ecos_target, sp_rep_target,
                      "Squamata", "Magnoliopsida_1", "Magnoliopsida_2")
     
     taxon_files <- list.files(ipt_dir, pattern = "\\.rds$", full.names = TRUE) %>% 
-      keep(~ tools::file_path_sans_ext(basename(.x)) %in% taxon_names)
+      keep(~ tools::file_path_sans_ext(basename(.x)) %>% 
+             str_remove("_national$") %in% taxon_names)
     
     ## Will collect one matrix per class, rbind at the end
     unmet_spp_list <- list()
@@ -448,7 +449,8 @@ terrestrial_model <- function(ecos_target, strat_ecos_target, sp_rep_target,
                      "Squamata", "Magnoliopsida_1", "Magnoliopsida_2")
     
     taxon_files <- list.files(ipt_dir, pattern = "\\.rds$", full.names = TRUE) %>% 
-      keep(~ tools::file_path_sans_ext(basename(.x)) %in% taxon_names)
+      keep(~ tools::file_path_sans_ext(basename(.x)) %>% 
+             str_remove("_national$") %in% taxon_names)
     
     ## Loop through each group 
     for (f in taxon_files) {
@@ -531,7 +533,7 @@ terrestrial_model <- function(ecos_target, strat_ecos_target, sp_rep_target,
   eco_coverage <- NULL
   
   if (ecos_target != 0) {  # For now, ecosystems always included. But make it flexible in case
-    ecosys_mat <- readRDS(file.path(ipt_dir, "ecosistemas_IAVH_2024.rds"))[ids, ]
+    ecosys_mat <- readRDS(file.path(ipt_dir, "ecosistemas_IAVH_2024_terrestres.rds"))[ids, ]
     ecosys_totals <- colSums(ecosys_mat)
     ecosys_names <- colnames(ecosys_mat)
     

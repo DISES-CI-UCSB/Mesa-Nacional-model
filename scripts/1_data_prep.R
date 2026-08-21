@@ -496,7 +496,7 @@ saveRDS(manglares_v, file.path(ipt_dir, "national", "manglares.rds"))
 
 
 ##------------------------------- Ecosystems -----------------------------------
-###----------------------------- Terrestrial -----------------------------------
+###------------------------- Terrestrial & SIRAP -------------------------------
 # First, convert shapefile to raster of matching CRS & resolution. 
 # Second, turn into gridded matrix matching other inputs.
 
@@ -512,62 +512,93 @@ ecosys_df <- data.frame(
   filter(biome != "N.A.") %>%           # weird manual NA in dataset
   mutate(biome_id = seq_len(nrow(.)))
 
-## Add biome codes to shapefile, then rasterize
-ecosys_r <- ecosys_sf %>% 
-  left_join(ecosys_df, join_by("bioma_IAvH" == "biome")) %>% 
-  vect() %>%     # make terra obj
-  rasterize(template_terra, field = "biome_id") %>% 
-  mask(template_terra) # remove coastal areas; won't be included in PUs anyways
-
-## Save the intermediate raster and biome code df
-writeRaster(ecosys_r, 
-            file.path(geo_dir, "national", "ecosistemas_IAVH_2024.tif"), 
-            overwrite = TRUE)
-write_csv(ecosys_df, file.path(geo_dir, "national", "ecosistemas_IDs_IAVH_2024.csv"))
-
-
-## Some ecosystems won't be evaluated (outside PUs -- defined by IHEH2022)
-## Only keep ecosystems that remain after masking.
-## First, get list of which ecosystems remain
-valid_ids <- freq(ecosys_r)$value
-
-## Then, update df with remaining ecosystems
-ecosys_df_valid <- ecosys_df %>% 
-  filter(biome_id %in% valid_ids)
-
-## Convert raster in to df of values
-vals <- as.data.frame(ecosys_r, cells = TRUE, na.rm = TRUE) %>% 
-  filter(biome_id %in% valid_ids) %>% 
-  ## sparseMatrix requires sequential numbers, so remap w/temporary variable
-  mutate(biome_id_j = match(biome_id, ecosys_df_valid$biome_id))
-
-## Create sparse matrix
-ecosys_mat <- sparseMatrix(
-  i = vals$cell,         # each row = raster cell
-  j = vals$biome_id_j,   # each column = ecosystem
-  x = 1,
-  dims = c(ncell(ecosys_r), nrow(ecosys_df_valid)),
-  dimnames = list(
-    NULL,
-    ecosys_df_valid$biome
+## Function wrap to iterate over national and regional levels
+ecosys_prep <- function(geo_level) {
+  ## Match template and output directory to geographic level
+  cfg <- switch(geo_level,
+                terrestres = list(template = template_terra, dir = "national"),
+                EC = list(template = template_ec, dir = "sirap/eje_cafetero"),
+                orinoquia = list(template = template_ori, dir = "sirap/orinoquia"),
+                stop("Unknown geographic level: ", geo_level))
+  
+  template <- cfg$template
+  dir <- cfg$dir
+  
+    ## Add biome codes to shapefile, then rasterize
+  ecosys_r <- ecosys_sf %>% 
+    left_join(ecosys_df, join_by("bioma_IAvH" == "biome")) %>% 
+    vect() %>%     # make terra obj
+    rasterize(template, field = "biome_id") %>% 
+    mask(template) # remove outside; won't be included in PUs anyways
+  
+  ## Save the intermediate raster and biome code df
+  writeRaster(ecosys_r, 
+              file.path(geo_dir, dir, sprintf("ecosistemas_IAVH_2024_%s.tif", geo_level)), 
+              overwrite = TRUE)
+  
+  write_csv(ecosys_df, 
+            file.path(geo_dir, dir, sprintf("ecosistemas_IDs_IAVH_2024_%s.csv", geo_level))
+            )
+  
+  
+  ## Some ecosystems won't be evaluated (outside PUs -- defined by IHEH2022)
+  ## Only keep ecosystems that remain after masking.
+  ## First, get list of which ecosystems remain
+  valid_ids <- freq(ecosys_r)$value
+  
+  ## Then, update df with remaining ecosystems
+  ecosys_df_valid <- ecosys_df %>% 
+    filter(biome_id %in% valid_ids)
+  
+  ## Convert raster in to df of values
+  vals <- as.data.frame(ecosys_r, cells = TRUE, na.rm = TRUE) %>% 
+    filter(biome_id %in% valid_ids) %>% 
+    ## sparseMatrix requires sequential numbers, so remap w/temporary variable
+    mutate(biome_id_j = match(biome_id, ecosys_df_valid$biome_id))
+  
+  ## Create sparse matrix
+  ecosys_mat <- sparseMatrix(
+    i = vals$cell,         # each row = raster cell
+    j = vals$biome_id_j,   # each column = ecosystem
+    x = 1,
+    dims = c(ncell(ecosys_r), nrow(ecosys_df_valid)),
+    dimnames = list(
+      NULL,
+      ecosys_df_valid$biome
+    )
   )
-)
+  
+  ## Save matrix
+  saveRDS(ecosys_mat, 
+          file.path(ipt_dir, dir, sprintf("ecosistemas_IAVH_2024_%s.rds", geo_level))
+          )
+  
+  ## How many ecosystems already are meeting targets under RUNAP and OMEC?
+  ## *** NOTE: The `ecosys_coverage()` fxn currently only works at national (terrestrial) level. 
+  ## *** Can update fxn in `utils.R` in the future if SIRAP models want to include all national-level ecosystems.
+  ## *** For now, these matrices are generated just for post-hoc metrics within the too.***
+  if (geo_level == "terrestres") {
+    ecosys_mat <- readRDS(file.path(ipt_dir, dir, sprintf("ecosistemas_IAVH_2024_%s.rds", geo_level)))
+    ids <- cells(template)
+    
+    ## Run function to determine which terrestrial ecosystems have already met targets.
+    eco_terra_filtered <- ecosys_coverage(ecosys_mat,
+                                          targets = c(17, 30),
+                                          ids, "terrestrial")
+  }
+ 
+  
+} #END FXN
 
-## Save matrix
-saveRDS(ecosys_mat, file.path(ipt_dir, "national", "ecosistemas_IAVH_2024.rds"))
+## Iterate national ecosystems over all geographic levels
+purrr::walk(.x = c("terrestres", "EC", "orinoquia"), 
+            .f = ecosys_prep, 
+            .progress = TRUE)
 
 
-## How many ecosystems already are meeting targets under RUNAP and OMEC?
-ecosys_mat <- readRDS(file.path(ipt_dir, "national", "ecosistemas_IAVH_2024.rds"))
-ids <- cells(template_terra)
-
-## Run function to determine which terrestrial ecosystems have already met targets.
-eco_terra_filtered <- ecosys_coverage(ecosys_mat,
-                                      targets = c(17, 30),
-                                      ids, "terrestrial")
 
 ## Read in intermediate fxn product to visualize ecosystems size if useful
-# ecosys_summary <- read_csv(file.path(temp_dir,"national", "terrestrial_ecosystem_coverage.csv"))
+# ecosys_summary <- read_csv(file.path(temp_dir, "national", "terrestrial_ecosystem_coverage.csv"))
 # 
 # ggplot(ecosys_summary, aes (x = total_cells)) +
 #   geom_histogram(bins = 30, color = "black", fill = "steelblue") +
@@ -1191,6 +1222,9 @@ rm(spp_m_list, vmat_nr)
 # Create a sparse matrix for ALL of the species data, which will be used for 
 # generating metrics after running the prioritization models
 
+## Path to locally stored BioModelos data
+biomod_fp <- "C:/Users/nmcmanus/OneDrive - Conservation International Foundation/Documents/Projects/DISES/biomodelos/BioModelos_Data/NatGeo_NGS-86896T-21"
+
 ## Read in list of all species
 spp_df <- read_csv(file.path(temp_dir, "national", "biomod_spp_ranges_updatedIUCN.csv"))
 
@@ -1216,49 +1250,89 @@ spp_df <-
 
 classes <- unique(spp_df$class)
 
-## Loop through species and make matrices for each taxonomic class
-for (current_class in classes) {
-  message("Working on: ", current_class)
-  class_list <- spp_df %>% filter(class == current_class)
+
+## Wrap in function to replicate for national and regional scales
+taxon_matrices <- function(geo_level) {
+  ## Match template and output directory to geographic level
+  cfg <- switch(geo_level,
+                national = list(template = template_terra, dir = "national"),
+                EC = list(template = template_ec, dir = "sirap/eje_cafetero"),
+                orinoquia = list(template = template_ori, dir = "sirap/orinoquia"),
+                stop("Unknown geographic level: ", geo_level))
   
-  for (i in 1:nrow(class_list)){
-    if(i == 1) {
-      ## Read in and resample raster to match res and ext exactly (slight diff); already same CRS
-      r <- rast(class_list$file_name[1]) %>% 
-        project(., my_crs, method = "near") %>% 
-        resample(., template_terra, method = "near")
-      
-      ## change name to just spp
-      names(r) <- class_list$scientific_name[1]
-      
-      ## Get binary values, then turn into sparse matrix
-      v <- values(r)
-      v[is.na(v)]<-0
-      vmat <- as(v,'sparseMatrix')
-      
+  template <- cfg$template
+  dir <- cfg$dir
+  
+  ## Loop through species and make matrices for each taxonomic class
+  for (current_class in classes) {
+    message("Working on: ", current_class, " (", geo_level, ")")
+    class_list <- spp_df %>% filter(class == current_class)
+    
+    for (i in 1:nrow(class_list)){
+      ## Create matrix with first raster
+      if(i == 1) {
+        ## Read in and match raster to template res and ext
+        if(geo_level == "national") {
+          r <- rast(class_list$file_name[1]) %>% 
+            project(., my_crs, method = "near") %>% 
+            resample(., template, method = "near")
+        } else {
+          r <- rast(class_list$file_name[1]) %>% 
+            project(., my_crs, method = "near") %>% 
+            disagg(
+              fact = round((res(.)[1] / res(template)[1]), 0), #factor must be integer
+              method = "near") %>% 
+            resample(., template, method = "near")
+        }
+        
+        ## change name to just spp
+        names(r) <- class_list$scientific_name[1]
+        
+        ## Get binary values, then turn into sparse matrix
+        v <- values(r)
+        v[is.na(v)] <- 0
+        vmat <- as(v,'sparseMatrix'); rm(r)
+        
       ## Loop through the rest and add to the matrix each time
-    } else {
-      r <- rast(class_list$file_name[i]) %>% 
-        project(., my_crs, method = "near") %>% 
-        resample(., template_terra, method = "near")
-      
-      names(r) <- class_list$scientific_name[i]
-      
-      v2 <- values(r)
-      v2[is.na(v2)]<-0
-      vmat2 <- as(v2,'sparseMatrix')
-      vmat <- cbind(vmat, vmat2)
-      
-      progress(i-1, max.value=nrow(class_list))
-    }
-  }
-  ## Export
-  saveRDS(vmat, file.path(ipt_dir, "national", sprintf("%s.rds", current_class)))
-  rm(vmat)
-}
+      } else {
+        if(geo_level == "national") {
+          r <- rast(class_list$file_name[i]) %>% 
+            project(., my_crs, method = "near") %>% 
+            resample(., template, method = "near")
+        } else {
+          r <- rast(class_list$file_name[i]) %>% 
+            project(., my_crs, method = "near") %>% 
+            disagg(
+              fact = round((res(.)[1] / res(template)[1]), 0), #factor must be integer
+              method = "near") %>% 
+            resample(., template, method = "near")
+        }
+        
+        names(r) <- class_list$scientific_name[i]
+        
+        v2 <- values(r)
+        v2[is.na(v2)] <- 0
+        vmat2 <- as(v2,'sparseMatrix'); rm(r)
+        vmat <- cbind(vmat, vmat2)
+        
+        progress(i-1, max.value=nrow(class_list))
+      }
+    }#END TAXON CLASS LOOP
+    
+    ## Export
+    saveRDS(vmat, file.path(ipt_dir, dir, sprintf("%s_%s.rds", current_class, geo_level)))
+    rm(vmat)
+    
+  }#END FOR LOOP
+  
+}#END FXN
 
+## Iterate over all geographic levels
+purrr::walk(.x = c("national", "EC", "orinoquia"), 
+            .f = taxon_matrices)
 
-
+## Or just run for one if needed
+# taxon_matrices("national")
 
 
 # ================================ MISC ====================================

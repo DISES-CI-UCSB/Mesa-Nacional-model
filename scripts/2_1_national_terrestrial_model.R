@@ -653,10 +653,7 @@ if (file.exists(failed_list)) {
 
 
 ## **NOTE: RERUNNING FOR AMPHIBIAN MODELS ONLY***
-rerun_list <- read_csv("rerun_list.csv")
-
-rerun_scenarios <- scenarios_terra_df %>% 
-  filter(model_name %in% rerun_list$scenario) 
+rerun_scenarios <- read_csv("rerun_scenarios.csv")
 
 purrr::pmap(rerun_scenarios, terrestrial_model)
 

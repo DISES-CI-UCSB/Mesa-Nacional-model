@@ -172,39 +172,32 @@ writeVector(omec_vect,
 
 
 ## Create function to prep and save rasters and matrices for both RUNAP and OMEC
-## according to different model geographic levels
-runap_omec_prep <- function(type, geo_level) {
+## according to different model geographic regions
+runap_omec_prep <- function(type, region) {
+  ## Match template and output directory to geographic region
+  cfg <- switch(region,
+                terrestres = list(template = template_terra, dir = "national"),
+                marinos = list(template = template_mar, dir = "national"),
+                EC = list(template = template_ec, dir = "sirap/eje_cafetero"),
+                orinoquia = list(template = template_ori, dir = "sirap/orinoquia"),
+                stop("Unknown geographic region: ", region))
+  
+  template <- cfg$template
+  dir <- cfg$dir
+  
   ## Assign proper vector
   vect <- switch(type,
                  runap = runap_vect, 
                  omec = omec_vect, 
                  stop("Unknown type: ", type))
   
-  ## Rasterize and set filenames matching geographic level
-  if (geo_level == "terrestrial") {
-    r <- rasterize(vect, template_terra)
-    r_path <- file.path(geo_dir, "national", paste0(type, "_terrestres.tif"))
-    v_path <- file.path(ipt_dir, "national", paste0(type, "_terrestres.rds"))
-    
-  } else if (geo_level == "marine") {
-    r <- rasterize(vect, template_mar)
-    r_path <- file.path(geo_dir, "national", paste0(type, "_marinos.tif"))
-    v_path <- file.path(ipt_dir, "national", paste0(type, "_marinos.rds"))
-    
-  } else if (geo_level == "eje_cafetero") {
-    r <- rasterize(vect, template_ec)
-    r_path <- file.path(geo_dir, "sirap/eje_cafetero", paste0(type, "_EC.tif"))
-    v_path <- file.path(ipt_dir, "sirap/eje_cafetero", paste0(type, "_EC.rds"))
-    
-  } else if (geo_level == "orinoquia") {
-    r <- rasterize(vect, template_ori)
-    r_path <- file.path(geo_dir, "sirap/orinoquia", paste0(type, "_orinoquia.tif"))
-    v_path <- file.path(ipt_dir, "sirap/orinoquia", paste0(type, "_orinoquia.rds"))
-  } else {
-    stop("Unknown geographic level: ", geo_level)
-  }
+  ## Set filenames matching geographic region
+  r_path <- file.path(geo_dir, dir, paste0(type, "_", region, ".tif"))
+  v_path <- file.path(ipt_dir, dir, paste0(type, "_", region, ".rds"))
   
-  names(r) <- type
+  ## Rasterize and save
+  r <- rasterize(vect, template) %>% 
+    setNames(type)
   writeRaster(r, r_path, overwrite = TRUE)
   
   mat <- as.matrix(r)
@@ -213,10 +206,10 @@ runap_omec_prep <- function(type, geo_level) {
 }
 
 
-## Iterate function over all levels
+## Iterate function over all regions
 df <- expand.grid(
   type = c("runap", "omec"),
-  geo_level = c("terrestrial", "marine", "eje_cafetero", "orinoquia"),
+  region = c("terrestres", "marinos", "EC", "orinoquia"),
   stringsAsFactors = FALSE
 )
 
@@ -227,42 +220,82 @@ purrr::pwalk(df, runap_omec_prep, .progress = TRUE); rm(df)
 ## Afro-Colombian communities ----------------------------------
 ## Read in raw shapefile, transform and save
 comunidades_vect <- vect(file.path(includes, "Consejo_Comunitario_Titulado/Consejo_Comunitario_Titulado.shp")) %>% 
-  project(., crs(template_terra))
+  project(., my_crs)
 
 writeVector(comunidades_vect, 
             file.path(geo_dir, "national", "comunidades.shp"), 
             overwrite = TRUE)
 
-## Now rasterize and save
-comunidades_r <- rasterize(comunidades_vect, template_terra)
-names(comunidades_r) <- "comunidades"
-writeRaster(comunidades_r, 
-            file.path(geo_dir, "national", "comunidades.tif"), 
-            overwrite = TRUE)
+## Function to rasterize, turn into matrix, and save for national and SIRAP levels
+comunidades_prep <- function(region) {
+  cfg <- switch(region,
+                national = list(template = template_terra, dir = "national"),
+                EC = list(template = template_ec, dir = "sirap/eje_cafetero"),
+                orinoquia = list(template = template_ori, dir = "sirap/orinoquia"),
+                stop("Unknown geographic region: ", region))
+  
+  template <- cfg$template
+  dir <- cfg$dir
+  
+  ## Rasterize and save
+  comunidades_r <- rasterize(comunidades_vect, template) %>% 
+    setNames("comunidades")
 
-## Finally, turn to matrix and save
-comunidades_v <- as.matrix(comunidades_r)
-comunidades_v[is.na(comunidades_v)] <- 0
-saveRDS(comunidades_v, file.path(ipt_dir, "national", "comunidades.rds"))
+  writeRaster(comunidades_r,
+              file.path(geo_dir, dir, paste0("comunidades_", region, ".tif")),
+              overwrite = TRUE)
+  
+  ## Turn into matrix and save
+  comunidades_v <- as.matrix(comunidades_r)
+  comunidades_v[is.na(comunidades_v)] <- 0
+  saveRDS(comunidades_v, file.path(ipt_dir, dir, paste0("comunidades_", region, ".rds")))
+}
 
+## Prep for all geographic regions
+purrr::walk(.x = c("national", "EC", "orinoquia"),
+            .f = comunidades_prep,
+            .progress = TRUE)
 
 
 ## Indigenous reserves ---------------------------------------
+## Read in raw data, reproject, and save
 resguardos_vect <- vect(file.path(includes, "Resguardo_Indigena_Formalizado/Resguardo_Indígena_Formalizado.shp")) %>% 
   project(., crs(template_terra))
+
 writeVector(resguardos_vect, 
             file.path(geo_dir, "national", "resguardos.shp"),
             overwrite = TRUE)
 
-resguardos_r <- rasterize(resguardos_vect, template_terra)
-names(resguardos_r) <- "resguardos"
-writeRaster(resguardos_r, 
-            file.path(geo_dir, "national", "resguardos.tif"), 
-            overwrite = TRUE)
+## Function to rasterize, turn into matrix, and export for all region
+resguardos_prep <- function(region){
+  cfg <- switch(region,
+                national = list(template = template_terra, dir = "national"),
+                EC = list(template = template_ec, dir = "sirap/eje_cafetero"),
+                orinoquia = list(template = template_ori, dir = "sirap/orinoquia"),
+                stop("Unknown geographic region: ", region))
+  
+  template <- cfg$template
+  dir <- cfg$dir
+  
+  ## Rasterize and save
+  resguardos_r <- rasterize(resguardos_vect, template) %>% 
+    setNames("resguardos")
+  
+  writeRaster(resguardos_r,
+              file.path(geo_dir, dir, paste0("resguardos_", region, ".tif")),
+              overwrite = TRUE)
+  
+  ## Turn into matrix and save
+  resguardos_v <- as.matrix(resguardos_r)
+  resguardos_v[is.na(resguardos_v)] <- 0
+  saveRDS(resguardos_v, file.path(ipt_dir, dir, paste0("resguardos_", region, ".rds")))
+}
 
-resguardos_v <- as.matrix(resguardos_r)
-resguardos_v[is.na(resguardos_v)] <- 0
-saveRDS(resguardos_v, file.path(ipt_dir, "national", "resguardos.rds"))
+
+## Prep for all geographic regions
+purrr::walk(.x = c("national", "EC", "orinoquia"),
+            .f = resguardos_prep,
+            .progress = TRUE)
 
 
 
@@ -271,78 +304,103 @@ saveRDS(resguardos_v, file.path(ipt_dir, "national", "resguardos.rds"))
 features <- here("data/features")
 
 ##-------------------------- Ecosystem Services --------------------------------
-### Carbon -----------------------------------
-# Data from Spawn et. al 2020. 
-# NOTE: Using prepped raster from Jaime. Need to figure out how this was created.
+# All ecosystem services (carbon and water) will be prepped within one 
+# wrapper function, the applied across all geographic regions
 
-carbono_r <- rast(file.path(features, "agb_plus_bgb_spawn_2020_fixed_1km.tif")) %>% 
-  project(., my_crs, method = "bilinear") %>%
-  resample(., template_terra, method = "bilinear") %>% 
-  setNames("carbono")
+ecos_serv_prep <- function(region){
+  ## Match template and output directory to geographic region
+  cfg <- switch(region,
+                terrestres = list(template = template_terra, dir = "national"),
+                EC = list(template = template_ec, dir = "sirap/eje_cafetero"),
+                orinoquia = list(template = template_ori, dir = "sirap/orinoquia"),
+                stop("Unknown geographic region: ", region))
+  
+  template <- cfg$template
+  dir <- cfg$dir
+  
+  ### Carbon -----------------------------------
+  # Data from Spawn et. al 2020. 
+  # NOTE: Using prepped raster from Jaime. Need to figure out how this was created.
+  
+  ## Match resolution and projection
+  carbono_r <- rast(file.path(features, "agb_plus_bgb_spawn_2020_fixed_1km.tif")) %>% 
+    project(., my_crs, method = "bilinear") %>%
+    resample(., template, method = "bilinear") %>% 
+    setNames("carbono")
+  
+  ## Save raster
+  writeRaster(carbono_r, 
+              file.path(geo_dir, dir, paste0("carbono_", region, ".tif")), 
+              overwrite = TRUE)
+  
+  ## Turn into matrix
+  carbono_v <- as.matrix(carbono_r)
+  carbono_v[is.na(carbono_v)] <- 0
+  
+  
+  ### Freshwater -------------------------------
+  # Data from IDEAM 2018 ENA. Already provided as categorical GeoTiff. 
+  # Only want to evaluate "moderate" and "high" value areas in model.
+  
+  ## Read in raster
+  agua_r <- rast(
+    file.path(
+      features,
+      "Zonas Potenciales de Recarga de Agua Subterraneas Ena2018",
+      "GeoTiff/ass_h_ena2018_rcg.tif"
+    ))
+  
+  ## We only want the categorical values ("vals")
+  levels(agua_r) <- NULL
+  
+  ## Reproject in our CRS
+  agua_r <- project(agua_r, my_crs, method = "near")
+  
+  ## Aggregate and resample to match resolution
+  fact <- floor(res(template)[[1]]/res(agua_r)[[1]]) # Original is ~90m resolution
+  
+  agua_r <- aggregate(agua_r, fact, fun = "modal") %>% 
+    resample(., template, method = "near")
+  
+  ## Only keep moderate and high levels (vals 3 and 4)
+  agua_binary_r <- classify(agua_r, matrix(c(1, 0,  # muy bajo
+                                             2, 0,  # bajo
+                                             3, 1,  # moderado
+                                             4, 1), # alto
+                                           ncol = 2, byrow = TRUE)) %>%
+    setNames("agua_dulce")
+  
+  ## Save rasters
+  writeRaster(agua_r, file.path(
+    temp_dir,
+    dir,
+    paste0("recarga_agua_subterranea_", region, ".tif")
+  ), overwrite = TRUE)
+  
+  writeRaster(agua_binary_r, file.path(
+    geo_dir,
+    dir,
+    paste0("recarga_agua_subterranea_moderado_alto_", region, ".tif")
+  ), overwrite = TRUE)
+  
+  ## Turn into matrix
+  agua_v <- as.matrix(agua_binary_r)
+  agua_v[is.na(agua_v)] <- 0
+  
+  
+  
+  ## Compile all ecosystem services into one matrix and save
+  ecosys_serv_v <- cbind(carbono_v, agua_v)
+  ecosys_serv_v <- as(ecosys_serv_v, "dgCMatrix")
+  saveRDS(ecosys_serv_v, 
+          file.path(ipt_dir, dir, paste0("servicios_ecosistemicos_", region, ".rds")))
+  
+}
 
-## Save raster
-writeRaster(carbono_r, 
-            file.path(geo_dir, "national", "carbono.tif"), 
-            overwrite = TRUE)
-
-## Turn into matrix
-carbono_v <- as.matrix(carbono_r)
-carbono_v[is.na(carbono_v)] <- 0
-
-
-### Freshwater -------------------------------
-# Data from IDEAM 2018 ENA. Already provided as categorical GeoTiff. 
-# Only want to evaluate "moderate" and "high" value areas in model.
-
-## Read in raster
-agua_r <- rast(
-  file.path(
-    features,
-    "Zonas Potenciales de Recarga de Agua Subterraneas Ena2018",
-    "GeoTiff/ass_h_ena2018_rcg.tif"
-  ))
-
-## See full attribute table. Terra automatically loads "cantidad"
-# cats(agua_r)
-
-## We only want the categorical values ("vals")
-levels(agua_r) <- NULL
-
-## Reproject in our CRS
-agua_r <- project(agua_r, my_crs, method = "near")
-
-## Aggregate and resample to match 1km resolution
-fact <- floor(res(template_terra)[[1]]/res(agua_r)[[1]]) # Original is ~90m resolution
-
-agua_r <- aggregate(agua_r, fact, fun = "modal") %>% 
-  resample(., template_terra, method = "near")
-
-## Only keep moderate and high levels (vals 3 and 4)
-agua_binary_r <- classify(agua_r, matrix(c(1, 0, # muy bajo
-                                           2, 0, # bajo
-                                           3, 1, # moderado
-                                           4, 1), # alto
-                                         ncol = 2, byrow = TRUE)) %>% 
-  setNames("agua_dulce")
-
-## Save rasters
-writeRaster(agua_r, 
-            file.path(temp_dir, "national", "recarga_agua_subterranea.tif"), 
-            overwrite = TRUE)
-writeRaster(agua_binary_r,
-            file.path(geo_dir, "national", "recarga_agua_subterranea_moderado_alto.tif"),
-            overwrite = TRUE)
-
-## Turn into matrix
-agua_v <- as.matrix(agua_binary_r)
-agua_v[is.na(agua_v)] <- 0
-
-
-
-## Compile all ecosystem services into one matrix and save
-ecosys_serv_v <- cbind(carbono_v, agua_v)
-ecosys_serv_v <- as(ecosys_serv_v, "dgCMatrix")
-saveRDS(ecosys_serv_v, file.path(ipt_dir, "national", "servicios_ecosistemicos.rds"))
+## Run over all regions
+purrr::walk(.x = c("terrestres", "EC", "orinoquia"),
+            .f = ecos_serv_prep,
+            .progress = TRUE)
 
 
 ##------------------------- Strategic Ecosystems -------------------------------
@@ -350,13 +408,13 @@ saveRDS(ecosys_serv_v, file.path(ipt_dir, "national", "servicios_ecosistemicos.r
 # These will be included in all the national and SIRAP models.
 
 ## Wrap prep of all three (paramos, bosque seco, humedales) within one function. 
-strat_eco_prep <- function(geo_level) {
-  ## Match template and output directory to geographic level
-  cfg <- switch(geo_level,
+strat_eco_prep <- function(region) {
+  ## Match template and output directory to geographic region
+  cfg <- switch(region,
                 terrestres = list(template = template_terra, dir = "national"),
                 EC = list(template = template_ec, dir = "sirap/eje_cafetero"),
                 orinoquia = list(template = template_ori, dir = "sirap/orinoquia"),
-                stop("Unknown geographic level: ", geo_level))
+                stop("Unknown geographic region: ", region))
   
   template <- cfg$template
   dir <- cfg$dir
@@ -371,9 +429,9 @@ strat_eco_prep <- function(geo_level) {
     setNames("paramos")
   
   ## Save raster
-  if (geo_level != "terrestres") {
+  if (region != "terrestres") {
     writeRaster(paramos_r, 
-                file.path(geo_dir, dir, sprintf("paramos_%s.tif", geo_level)), 
+                file.path(geo_dir, dir, sprintf("paramos_%s.tif", region)), 
                 overwrite = TRUE)
   } else {
     writeRaster(paramos_r, 
@@ -393,9 +451,9 @@ strat_eco_prep <- function(geo_level) {
     rasterize(., template) %>% 
     setNames("bosque_seco")
   
-  if (geo_level != "terrestres") {
+  if (region != "terrestres") {
     writeRaster(bosque_seco_r, 
-                file.path(geo_dir, dir, sprintf("bosque_seco_%s.tif", geo_level)), 
+                file.path(geo_dir, dir, sprintf("bosque_seco_%s.tif", region)), 
                 overwrite = TRUE)
   } else {
     writeRaster(bosque_seco_r, 
@@ -421,16 +479,16 @@ strat_eco_prep <- function(geo_level) {
   humedales_v[is.na(humedales_v)] <- 0
   
   ## Slightly different processing for Eje Cafetero:
-  if (geo_level != "EC") {
-    ## For other levels, just save raster as normal
+  if (region != "EC") {
+    ## For other regions, just save raster as normal
     writeRaster(humedales_r, 
                 file.path(geo_dir, dir, "humedales.tif"), 
                 overwrite = TRUE)
     
-  } else if (geo_level == "EC") {
+  } else if (region == "EC") {
     ## ID that these are the national level data
     writeRaster(humedales_r, 
-                file.path(geo_dir, dir, "humedales_nacionales.tif"), 
+                file.path(geo_dir, dir, "humedales_national.tif"), 
                 overwrite = TRUE)
     
     ## Now prep Eje wetlands
@@ -472,13 +530,15 @@ strat_eco_prep <- function(geo_level) {
   strat_ecos_ter_v <- cbind(paramos_v, bosque_seco_v, humedales_v)
   strat_ecos_ter_v <- as(strat_ecos_ter_v, "dgCMatrix")
   saveRDS(strat_ecos_ter_v, file.path(
-    ipt_dir, dir, sprintf("ecosistemas_estrategicos_%s.rds", geo_level)
+    ipt_dir, dir, sprintf("ecosistemas_estrategicos_%s.rds", region)
   ))
   
 } # END strategic ecosystem prep fxn
 
-## Iterate strategic ecosystem prep over all levels
-purrr::walk(c("terrestres", "EC", "orinoquia"), strat_eco_prep, .progress = TRUE)
+## Iterate strategic ecosystem prep over all regions
+purrr::walk(.x = c("terrestres", "EC", "orinoquia"), 
+            .f = strat_eco_prep, 
+            .progress = TRUE)
 
 
 ###----------------------------- Marine ---------------------------------------
@@ -513,13 +573,13 @@ ecosys_df <- data.frame(
   mutate(biome_id = seq_len(nrow(.)))
 
 ## Function wrap to iterate over national and regional levels
-ecosys_prep <- function(geo_level) {
-  ## Match template and output directory to geographic level
-  cfg <- switch(geo_level,
+ecosys_prep <- function(region) {
+  ## Match template and output directory to geographic region
+  cfg <- switch(region,
                 terrestres = list(template = template_terra, dir = "national"),
                 EC = list(template = template_ec, dir = "sirap/eje_cafetero"),
                 orinoquia = list(template = template_ori, dir = "sirap/orinoquia"),
-                stop("Unknown geographic level: ", geo_level))
+                stop("Unknown geographic region: ", region))
   
   template <- cfg$template
   dir <- cfg$dir
@@ -533,11 +593,11 @@ ecosys_prep <- function(geo_level) {
   
   ## Save the intermediate raster and biome code df
   writeRaster(ecosys_r, 
-              file.path(geo_dir, dir, sprintf("ecosistemas_IAVH_2024_%s.tif", geo_level)), 
+              file.path(geo_dir, dir, sprintf("ecosistemas_IAVH_2024_%s.tif", region)), 
               overwrite = TRUE)
   
   write_csv(ecosys_df, 
-            file.path(geo_dir, dir, sprintf("ecosistemas_IDs_IAVH_2024_%s.csv", geo_level))
+            file.path(geo_dir, dir, sprintf("ecosistemas_IDs_IAVH_2024_%s.csv", region))
             )
   
   
@@ -570,15 +630,15 @@ ecosys_prep <- function(geo_level) {
   
   ## Save matrix
   saveRDS(ecosys_mat, 
-          file.path(ipt_dir, dir, sprintf("ecosistemas_IAVH_2024_%s.rds", geo_level))
+          file.path(ipt_dir, dir, sprintf("ecosistemas_IAVH_2024_%s.rds", region))
           )
   
   ## How many ecosystems already are meeting targets under RUNAP and OMEC?
   ## *** NOTE: The `ecosys_coverage()` fxn currently only works at national (terrestrial) level. 
   ## *** Can update fxn in `utils.R` in the future if SIRAP models want to include all national-level ecosystems.
   ## *** For now, these matrices are generated just for post-hoc metrics within the too.***
-  if (geo_level == "terrestres") {
-    ecosys_mat <- readRDS(file.path(ipt_dir, dir, sprintf("ecosistemas_IAVH_2024_%s.rds", geo_level)))
+  if (region == "terrestres") {
+    ecosys_mat <- readRDS(file.path(ipt_dir, dir, sprintf("ecosistemas_IAVH_2024_%s.rds", region)))
     ids <- cells(template)
     
     ## Run function to determine which terrestrial ecosystems have already met targets.
@@ -590,7 +650,7 @@ ecosys_prep <- function(geo_level) {
   
 } #END FXN
 
-## Iterate national ecosystems over all geographic levels
+## Iterate national ecosystems over all geographic regions
 purrr::walk(.x = c("terrestres", "EC", "orinoquia"), 
             .f = ecosys_prep, 
             .progress = TRUE)
@@ -1054,7 +1114,7 @@ spp_nr_df <- spp_ranges_updated_df %>%
 
 ## Save
 write_csv(spp_nr_df, 
-          file.path(ipt_dir, "national", "biomod_spp_responsibilidad_nacional.csv"))
+          file.path(ipt_dir, "national", "biomod_spp_responsibilidad_national.csv"))
 
 # ## Visualize responsibility spread
 # thres <- spp_nr_df %>% filter(responsibility <= 0.3) #Cut off long tail to visualize easier
@@ -1201,7 +1261,7 @@ rm(spp_m_list, vmat_rep)
 
 #### ------------------------ National Responsibility --------------------------
 # A second matrix filtering species based on "national responsibility" thresholds.
-spp_nr_df <- read_csv(file.path(ipt_dir, "national", "biomod_spp_responsibilidad_nacional.csv"))
+spp_nr_df <- read_csv(file.path(ipt_dir, "national", "biomod_spp_responsibilidad_national.csv"))
 
 spp_m_list <- spp_nr_df %>% 
   filter(target_met == FALSE,
@@ -1214,7 +1274,7 @@ spp_m_list <- spp_nr_df %>%
 vmat_nr <- filtered_matrix(spp_m_list)
 
 ## Export
-saveRDS(vmat_nr, file.path(ipt_dir, "national", "biomod_filtered_responsibilidad_nacional.rds"))
+saveRDS(vmat_nr, file.path(ipt_dir, "national", "biomod_filtered_responsibilidad_national.rds"))
 rm(spp_m_list, vmat_nr)
 
 
@@ -1252,27 +1312,27 @@ classes <- unique(spp_df$class)
 
 
 ## Wrap in function to replicate for national and regional scales
-taxon_matrices <- function(geo_level) {
-  ## Match template and output directory to geographic level
-  cfg <- switch(geo_level,
+taxon_matrices <- function(region) {
+  ## Match template and output directory to geographic region
+  cfg <- switch(region,
                 national = list(template = template_terra, dir = "national"),
                 EC = list(template = template_ec, dir = "sirap/eje_cafetero"),
                 orinoquia = list(template = template_ori, dir = "sirap/orinoquia"),
-                stop("Unknown geographic level: ", geo_level))
+                stop("Unknown geographic region: ", region))
   
   template <- cfg$template
   dir <- cfg$dir
   
   ## Loop through species and make matrices for each taxonomic class
   for (current_class in classes) {
-    message("Working on: ", current_class, " (", geo_level, ")")
+    message("Working on: ", current_class, " (", region, ")")
     class_list <- spp_df %>% filter(class == current_class)
     
     for (i in 1:nrow(class_list)){
       ## Create matrix with first raster
       if(i == 1) {
         ## Read in and match raster to template res and ext
-        if(geo_level == "national") {
+        if(region == "national") {
           r <- rast(class_list$file_name[1]) %>% 
             project(., my_crs, method = "near") %>% 
             resample(., template, method = "near")
@@ -1295,7 +1355,7 @@ taxon_matrices <- function(geo_level) {
         
       ## Loop through the rest and add to the matrix each time
       } else {
-        if(geo_level == "national") {
+        if(region == "national") {
           r <- rast(class_list$file_name[i]) %>% 
             project(., my_crs, method = "near") %>% 
             resample(., template, method = "near")
@@ -1320,14 +1380,14 @@ taxon_matrices <- function(geo_level) {
     }#END TAXON CLASS LOOP
     
     ## Export
-    saveRDS(vmat, file.path(ipt_dir, dir, sprintf("%s_%s.rds", current_class, geo_level)))
+    saveRDS(vmat, file.path(ipt_dir, dir, sprintf("%s_%s.rds", current_class, region)))
     rm(vmat)
     
   }#END FOR LOOP
   
 }#END FXN
 
-## Iterate over all geographic levels
+## Iterate over all geographic regions
 purrr::walk(.x = c("national", "EC", "orinoquia"), 
             .f = taxon_matrices)
 

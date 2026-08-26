@@ -14,7 +14,7 @@ pacman::p_load(  # automatically installs packages if needed
 ## Set seed and directories used in this script
 set.seed(500)
 ipt_dir <- here("data/model_inputs/national") 
-opt_dir <- here("results/national/terrestrial")
+opt_dir <- here("results/national/terrestrial/NEW")
 
 if (!dir.exists(opt_dir)) dir.create(opt_dir, recursive = TRUE)
 
@@ -84,11 +84,11 @@ terrestrial_model <- function(ecos_target, strat_ecos_target, sp_rep_target,
   }
   if ("comunidades" %in% includes) {
     ## Update to make any cell either condition as TRUE
-    locked_in <- locked_in | (readRDS(file.path(ipt_dir, "comunidades.rds"))[ids, ] == 1)
+    locked_in <- locked_in | (readRDS(file.path(ipt_dir, "comunidades_national.rds"))[ids, ] == 1)
   }
   if ("resguardos" %in% includes) {
     ## Update to make any cell either condition as TRUE
-    locked_in <- locked_in | (readRDS(file.path(ipt_dir, "resguardos.rds"))[ids, ] == 1)
+    locked_in <- locked_in | (readRDS(file.path(ipt_dir, "resguardos_national.rds"))[ids, ] == 1)
   }
   
 
@@ -141,7 +141,7 @@ terrestrial_model <- function(ecos_target, strat_ecos_target, sp_rep_target,
   ## -------- Ecosystem Services ----------------------------------
   # Read in matrix and add to features list if evaluated
   if (ecos_serv_target != 0) {
-    ecos_serv_v <- readRDS(file.path(ipt_dir, "servicios_ecosistemicos.rds"))
+    ecos_serv_v <- readRDS(file.path(ipt_dir, "servicios_ecosistemicos_terrestres.rds"))
     ecos_serv_v <- t(ecos_serv_v) %>% as("dgCMatrix")
     ecos_serv_v <- ecos_serv_v[, ids]
     ecos_serv_v[is.na(ecos_serv_v)] <- 0
@@ -185,12 +185,12 @@ terrestrial_model <- function(ecos_target, strat_ecos_target, sp_rep_target,
       
     ## Species national responsibility
     } else if (sp_rn_target == TRUE) {
-      mat <- readRDS(file.path(ipt_dir, "biomod_filtered_responsibilidad_nacional.rds"))
+      mat <- readRDS(file.path(ipt_dir, "biomod_filtered_responsibilidad_national.rds"))
       species_rij <- mat %>% t() %>% as("dgCMatrix"); rm(mat)    # transpose [rows == spp, columns == cell]
       species_rij <- species_rij[, ids]
       
       ## Filter dataframe
-      species_df <- read_csv(file.path(ipt_dir, "biomod_spp_responsibilidad_nacional.csv"), show_col_types = FALSE) %>% 
+      species_df <- read_csv(file.path(ipt_dir, "biomod_spp_responsibilidad_national.csv"), show_col_types = FALSE) %>% 
         filter(target_met == FALSE,                    # hasn't met target yet
                conservation_type == species_cons_type) # match RUNAP/RUNAP+OMEC
       
@@ -271,7 +271,7 @@ terrestrial_model <- function(ecos_target, strat_ecos_target, sp_rep_target,
     add_binary_decisions() %>% 
     add_boundary_penalties(penalty = 0.001, data = boundaries) %>% 
     ## NOTE: change threads and node_file_start depending on computer config
-    add_gurobi_solver(gap = 0.05, threads = 2, verbose = TRUE, node_file_start = 8)
+    add_gurobi_solver(gap = 0.05, threads = 14, verbose = TRUE)
   
   ## If problem fails presolve check, note it and skip to next
   log_file <- file.path(opt_dir, "failed_scenarios.txt")
@@ -314,7 +314,7 @@ terrestrial_model <- function(ecos_target, strat_ecos_target, sp_rep_target,
   if (sp_rep_target != 0) {
     
     ## Load each taxon class names (as matching matrices)
-    taxon_names <- c("Aves", "Mammalia", "Crocodylia", 
+    taxon_names <- c("Aves", "Amphibia", "Mammalia", "Crocodylia", 
                      "Squamata", "Magnoliopsida_1", "Magnoliopsida_2")
     
     taxon_files <- list.files(ipt_dir, pattern = "\\.rds$", full.names = TRUE) %>% 
@@ -327,7 +327,7 @@ terrestrial_model <- function(ecos_target, strat_ecos_target, sp_rep_target,
     ## Loop through each taxonomic class:
     ## Determine if any species haven't met targets and then add to list.
     for (f in taxon_files) {
-      taxon_name <- tools::file_path_sans_ext(basename(f))
+      taxon_name <- tools::file_path_sans_ext(basename(f)) %>% str_remove("_national$")
       message("Double-checking: ", taxon_name)
       
       ## Read in taxonomic class matrix
@@ -406,7 +406,7 @@ terrestrial_model <- function(ecos_target, strat_ecos_target, sp_rep_target,
         add_locked_in_constraints(locked_in_p2) %>%
         add_binary_decisions() %>% 
         add_boundary_penalties(penalty = 0.001, data = boundaries) %>% 
-        add_gurobi_solver(gap = 0.05, threads = 2, verbose = FALSE, node_file_start = 16)
+        add_gurobi_solver(gap = 0.05, threads = 14, verbose = FALSE)
       
       ## Always force this problem
       s2 <- solve(p2, force = TRUE)
@@ -454,7 +454,7 @@ terrestrial_model <- function(ecos_target, strat_ecos_target, sp_rep_target,
     
     ## Loop through each group 
     for (f in taxon_files) {
-      taxon_name <- tools::file_path_sans_ext(basename(f))
+      taxon_name <- tools::file_path_sans_ext(basename(f)) %>% str_remove("_national$")
       message("Processing species group: ", taxon_name)
       
       ## Total range per species (denominator). Compute once per matrix
@@ -500,7 +500,7 @@ terrestrial_model <- function(ecos_target, strat_ecos_target, sp_rep_target,
         
         ## Get species-specific targets for national responsibility
         species_df <- 
-          read_csv(file.path(ipt_dir, "biomod_spp_responsibilidad_nacional.csv"), show_col_types = FALSE) %>% 
+          read_csv(file.path(ipt_dir, "biomod_spp_responsibilidad_national.csv"), show_col_types = FALSE) %>% 
           filter(conservation_type == species_cons_type,
                  scientific_name %in% unevaluated) %>% 
           select(scientific_name, responsibility) %>% 
@@ -577,7 +577,7 @@ terrestrial_model <- function(ecos_target, strat_ecos_target, sp_rep_target,
   target_coverage_full <- rbind(target_coverage, post_hoc_coverage) %>% 
     ## Merge all plants back 
     mutate(class = case_when(
-      class %in% c("Magnoliospida_1", "Magnoliospida_2") ~ "Magnoliospida",
+      class %in% c("Magnoliopsida_1", "Magnoliopsida_2") ~ "Magnoliopsida",
       .default = class
     ))
   
@@ -649,7 +649,16 @@ if (file.exists(failed_list)) {
 }
 
 ## Generate model over list of scenarios
-purrr::pmap(scenarios_terra_df, terrestrial_model)
+# purrr::pmap(scenarios_terra_df, terrestrial_model)
+
+
+## **NOTE: RERUNNING FOR AMPHIBIAN MODELS ONLY***
+rerun_list <- read_csv("rerun_list.csv")
+
+rerun_scenarios <- scenarios_terra_df %>% 
+  filter(model_name %in% rerun_list$scenario) 
+
+purrr::pmap(rerun_scenarios, terrestrial_model)
 
 
 ## -------- Second Pass --------------------------------------
@@ -687,3 +696,4 @@ if (file.exists(failed_list)) {
 
 ## Rerun and force solutions
 purrr::pmap(rerun_df, terrestrial_model, skip_presolve = TRUE, force_s = TRUE)
+

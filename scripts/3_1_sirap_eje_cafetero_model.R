@@ -22,6 +22,11 @@ if (!dir.exists(opt_dir)) dir.create(opt_dir, recursive = TRUE)
 ## Use specific template for model
 template <- template_ec
 
+## Get cell area in km2
+## **NOTE: although EPSG9377 is not equal-area, checked distortion to be -0.08%. Basically negligible, so using simple constant.**
+cell_res_m <- terra::res(template)
+cell_area_km2 <- (cell_res_m[1] * cell_res_m[2]) / 1e6
+
 # ========== PRIORITZATION FUNCTION ============================================
 # Wrapping all the model building and running inside a function to easily run over a list of scenarios.
 
@@ -190,8 +195,10 @@ eje_model <- function(strat_ecos_target, bs_target, hum_target, includes, cost,
   ## ------- Summary statistics -------------------------------------
   ## Get coverage summary & save
   target_coverage <- eval_target_coverage_summary(p, s) %>%
-    mutate(scenario = model_name,           # Add the scenario info
-           evaluated = "prioritizr_model")  # These features explicitly evaluated in model
+    mutate(scenario = model_name,  # Add the scenario info
+           ## Translate number of PUs into area
+           total_amount_km2 = total_amount * cell_area_km2,
+           absolute_held_km2 = absolute_held * cell_area_km2)
   
   write_csv(target_coverage, file.path(opt_dir, paste0(model_name, "_summary.csv")))
   
@@ -210,6 +217,9 @@ eje_model <- function(strat_ecos_target, bs_target, hum_target, includes, cost,
     n_total = sum(freq_tbl$count),
     n_new_protection = get_freq(freq_tbl, "Priority area"),
     n_locked_in = get_freq(freq_tbl, "Locked in"),
+    area_total_km2 = sum(freq_tbl$count) * cell_area_km2,
+    area_new_protection_km2 = get_freq(freq_tbl, "Priority area") * cell_area_km2,
+    area_locked_in_km2 = get_freq(freq_tbl, "Locked in") * cell_area_km2,
     cost = cost_summary$cost,
     pct_targets_met = mean(target_coverage$met, na.rm = TRUE) * 100
   )
@@ -267,4 +277,22 @@ eje_model <- function(strat_ecos_target, bs_target, hum_target, includes, cost,
 purrr::pmap(scenarios_ec_df, eje_model, skip_presolve = TRUE, force_s = TRUE)
 
 
+
+## quick code for combining all results
+cols_to_round <- c("total_amount_km2", "absolute_held_km2")
+
+csv_files <- list.files(opt_dir, pattern = "\\.csv$", full.names = T)
+csv_files <- csv_files[-41]
+master_df <- csv_files %>%
+  map_dfr(~ read_csv(.x, show_col_types = FALSE) %>%
+            mutate(across(all_of(cols_to_round), ~ round(.x, 4)))) %>% 
+  relocate(scenario, .before = everything()) %>% 
+  relocate(total_amount_km2, .before = absolute_target) %>% 
+  relocate(absolute_held_km2, .before = absolute_shortfall) %>% 
+  mutate(absolute_target_km2 = absolute_target * cell_area_km2, .before = absolute_held)
+
+# ---- Write out the master CSV ----
+write_csv(master_df, file.path(opt_dir, "resultados_todos.csv"))
+
+df <- read_csv(file.path(opt_dir, "master_eval_summary.csv"))
 

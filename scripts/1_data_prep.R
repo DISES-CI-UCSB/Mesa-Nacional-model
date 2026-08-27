@@ -509,7 +509,7 @@ strat_eco_prep <- function(region) {
                 file.path(geo_dir, dir, "humedales_EC.shp"),
                 overwrite = TRUE)
     
-    ## Rasterize: some polygons are very small, so maximize represntivity
+    ## Rasterize: some polygons are very small, so maximize representivity
     ## in raster by using `touches = TRUE`
     hum_ec_r <- rasterize(hum_ec_v, template, touches = TRUE) %>% 
       setNames("humedales_eje_cafetero")
@@ -734,19 +734,17 @@ eco_mar_filtered <- ecosys_coverage(ecosys_mar_mat,
 # Ecosystem data specific to Orinoquia runs
 
 #### Savannas ---------------------------------------
-## Isolate only savanna ecosystems from full dataset
-sabana_r <- ecosys_sf %>% 
-  filter(ecos_sinte == "Sabana") %>% 
-  ## In case they want to differentiate between seasonal and floodable savannas
-  mutate(sab_type = case_when(
-    ecos_gener == "Sabana Estacional" ~ 1,
-    ecos_gener == "Sabana Inundable" ~ 2
+## Read in and rasterize
+sabana_r <- vect(
+  file.path(
+    features,
+    "Sabanas SIRAP Orinoquia",
+    "Sabanas_20241118_PAISAJES_SIRAPO_v3.shp"
   )) %>% 
-  vect() %>% 
-  rasterize(., template_ori, field = "sab_type") %>% 
-  mask(., template_ori) %>% 
-  setNames("sabana_orinoquia")
-
+  ## For now, treat all attributes as the same
+  aggregate() %>% 
+  rasterize(., template_ori)
+ 
 ## Save raster
 writeRaster(sabana_r, 
             file.path(geo_dir, "sirap/orinoquia", "sabana_orinoquia.tif"),
@@ -1395,14 +1393,40 @@ purrr::walk(.x = c("national", "EC", "orinoquia"),
 # taxon_matrices("national")
 
 
-# ================================ MISC ====================================
+# ======================= Vizualized layers (Misc.) ============================
 # These are data currently only used for visualization in the tool, not
 # used within the prioritizr model. 
 
 viz_path <- file.path("data/visualization")
 
+## ------------------------- Eje Cafetero ECC -------------------------------
+# Data provided by Eje Cafetero as two separate shapefiles. 
+# Read them in, match our projection, and merge them into one shapefile.
+ecc1_sf <- read_sf(file.path(
+  viz_path,
+  "ECC_Eje_Cafetero",
+  "vPg_AreasCompiladas_OEC_MN_fin.shp"
+)) %>%
+  st_transform(., crs = my_crs) %>%
+  janitor::clean_names() %>%
+  ## match order of columns
+  relocate(nom_ecc, .before = area_ha)
 
-### ----------------------------- ZRC  --------------------------------------
+ecc2_sf <- read_sf(file.path(
+  viz_path,
+  "ECC_Eje_Cafetero",
+  "vPg_ECC_SIRAP_EC_2021_v3_fin.shp"
+)) %>%
+  st_transform(., crs = my_crs) %>%
+  janitor::clean_names()
+
+## Combine and save
+ecc_total_sf <- rbind(ecc1_sf, ecc2_sf)
+
+write_sf(ecc_total_sf, file.path(geo_dir, "sirap/eje_cafetero", "ECC_combined_EC.shp"))
+
+
+## ------------------------------ ZRC --------------------------------------
 # Zonas de Reserva Campesina Constituida
 
 ## Read in shapefile and transform to project CRS
@@ -1416,27 +1440,27 @@ zrc_v <-
 writeVector(zrc_v, file.path(temp_dir, "zona_de_reserva_campesina.shp"))
 
 
-### --------------------------- RAMSAR -------------------------------------
+## --------------------------- RAMSAR -------------------------------------
 # Internationally recognized important wetlands
 
 ## Read in, transform to project CRS, and save
 ramsar_v <- vect(file.path(viz_path, "RAMSAR/RAMSAR.shp")) %>% 
   project(., my_crs)
 
-writeVector(ramsar_v, file.path(temp_dir, "ramsar_colombia.shp"))
+writeVector(ramsar_v, file.path(geo_dir, "national", "ramsar_colombia.shp"))
 
 
-### --------------------- Reserva Biosfera ---------------------------------
+## --------------------- Reserva Biosfera ---------------------------------
 # UNESCO Biosphere reserves
 
 ## Read in, transform, and save
 biosfera_v <- vect(file.path(viz_path, "reserva_biosfera/Reserva_Biosfera.shp")) %>% 
   project(., my_crs)
 
-writeVector(biosfera_v, file.path(temp_dir, "reserva_biosfera_colombia.shp"))
+writeVector(biosfera_v, file.path(geo_dir, "national", "reserva_biosfera_colombia.shp"))
             
             
-### -------------- Reservas Forestales (Ley 2da de 1959) ----------------
+## -------------- Reservas Forestales (Ley 2da de 1959) ----------------
 # The link provided for this dataset had to be downloaded by using an 
 # ArcGIS portal. 
 
@@ -1445,7 +1469,7 @@ ley2_v <- read_sf(file.path(viz_path, "reservas_forestales/reservas.shp")) %>%
   vect() %>% 
   project(., my_crs)
 
-writeVector(ley2_v, file.path(temp_dir, "reservas_forestales_ley2da.shp"))
+writeVector(ley2_v, file.path(geo_dir, "national", "reservas_forestales_ley2da.shp"))
 
 
 ### -------------- AICAS y KBAs ----------------

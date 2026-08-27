@@ -640,12 +640,12 @@ scenarios_ori_df <-
   mutate(
     ## make list
     includes = map(includes, ~ if (.x == "RUNAP y OMEC") c("RUNAP", "OMEC") else c("RUNAP")),
-    ## Add savanna targets (right now just 17%... might change)
-    sab_target = 17,
-    .before = includes
     ) %>% 
   ## Don't need these columns
-  select(-starts_with("atributo"), -id)
+  select(-starts_with("atributo"), -id) %>% 
+  ## Cross each scenario with both savanna targets
+  tidyr::expand_grid(sab_target = c(17, 30)) %>% 
+  relocate(sab_target, .before = includes)
 
 
 feature_abbr <- c(

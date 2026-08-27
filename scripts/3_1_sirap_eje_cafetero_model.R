@@ -1,5 +1,5 @@
-## script: National Marine Model
-## Purpose: Set parameters and run marine prioritization national models for Colombia
+## script: SIRAP Eje Cafetero Model
+## Purpose: Set parameters and run prioritization model for Eje Cafetero region in Colombia
 
 # ========== SETTING UP =======================================================
 ## Get functions and data
@@ -14,125 +14,147 @@ pacman::p_load(  # automatically installs packages if needed
 ## Set seed and directories
 set.seed(500)
 
-ipt_dir <- here("data/model_inputs/national")
-opt_dir <- here("results/national/marine")
+ipt_dir <- here("data/model_inputs/sirap/eje_cafetero")
+opt_dir <- here("results/sirap/eje_cafetero")
 
 if (!dir.exists(opt_dir)) dir.create(opt_dir, recursive = TRUE)
 
 ## Use specific template for model
-template <- template_mar
+template <- template_ec
 
+## Get cell area in km2
+## **NOTE: although EPSG9377 is not equal-area, checked distortion to be -0.08%. Basically negligible, so using simple constant.**
+cell_res_m <- terra::res(template)
+cell_area_km2 <- (cell_res_m[1] * cell_res_m[2]) / 1e6
 
 # ========== PRIORITZATION FUNCTION ============================================
-## Wrapping all the model building and running inside a function 
-## to easily run over a list of scenarios.
+# Wrapping all the model building and running inside a function to easily run over a list of scenarios.
 
-#' @param target Numeric. Target percentage (0-100) for all the features. 
+#' @param strat_ecos_target Numeric. Target percentage (0-100) for strategic 
+#'   ecosystems; 0 to exclude.
+#' @param bs_target Numeric. Target percentage (0-100) for bosque seco specifically. 
+#'   If NA, evaluated at strat_ecos_target. If not NA, evaluated separately.
+#' @param hum_target Numeric. Target percentage (0-100) for the humedales data
+#'   unique to Eje Cafetero. 
 #' @param includes Character vector. Which layers should be "locked-in" to the 
 #'   solution (e.g. "RUNAP", "OMEC").
-#' @param features Character vector. Which layers are include as a feature to
-#'   be evaluated in the problem (i.e. "ecosystems", "mangroves")
+#' @param cost Character. Which cost data to use ("IHEH2022" or 
+#'   "IHEH2030"). Also determines available planning units.
 #' @param model_name Character. Unique identifier for this scenario, used 
 #'   for output file names and logging.
 #' @param skip_presolve Logical. If TRUE, skip the presolve check and 
 #'   attempt to solve regardless. Default FALSE.
 #' @param force_s Logical. If TRUE, force gurobi to return a solution even 
 #'   if the presolve/solve process raises non-fatal warnings. Passed to 
-#'   solve(p, force = force_s). Default TRUE
+#'   solve(p, force = force_s). Default FALSE.
 #'
 #' @return NULL (invisibly). Writes solution raster and summary CSVs to 
 #'   opt_dir for each solution. Also creates and appends log of failed scenarios.
-marine_model <- function(target, includes, features, model_name, 
-                         skip_presolve = FALSE, force_s = TRUE) {
+
+eje_model <- function(strat_ecos_target, bs_target, hum_target, includes, cost, 
+                      model_name, skip_presolve = FALSE, force_s = FALSE) { 
   ## Print scenario and time of start
   message("Running scenario: ", model_name, 
           "\nRun start: ", format(Sys.time(), "%H:%M:%S"))
   
   # --------- PLANNING UNITS ------------------------------------------
-  ## For now, only one cost layer
-  pus <- readRDS(file.path(ipt_dir, "huella_humana_marina.rds"))
+  if (cost == "IHEH2022") {
+    pus <- readRDS(file.path(ipt_dir, "IHEH_EC_2022.rds"))
+  } else if (cost == "IHEH2030") {
+    pus <- readRDS(file.path(ipt_dir, "IHEH_EC_2030.rds"))
+  }
   
   ## Get list of all non-NA cells (each cell == planning unit)
   ids <- cells(template)
-  n_pus <- length(ids) # number of planning units
+  n_pus <- length(ids)
   
   pus <- pus[ids, ]
-  pus[is.na(pus)] <- 0 #shouldn't be any NAs but can use in case
+  pus[is.na(pus)] 
+  
   
   # --------- CONSTRAINTS (LOCK INS/OUTS) -----------------------------
   ## Unlist variable
   includes <- unlist(includes)
   
   ## RUNAP is always included
-  locked_in <- readRDS(file.path(ipt_dir, "runap_marinos.rds"))[ids, ] == 1
+  locked_in <- readRDS(file.path(ipt_dir, "runap_EC.rds"))[ids, ] == 1
   
   ## Add to locked_in matrix depending on scenario
   if ("OMEC" %in% includes) {
     ## Update to make any cell either condition as TRUE
-    locked_in <- locked_in | (readRDS(file.path(ipt_dir, "omec_marinos.rds"))[ids, ] == 1)
+    locked_in <- locked_in | (readRDS(file.path(ipt_dir, "omec_EC.rds"))[ids, ] == 1)
   }
   
   
-  # --------- FEATURES ----------------------------------------------
-  # Add features to empty lists if they are evaluated
-  # NOTE: currently both features (ecosystems and mangroves) always evaluated.
-  # This may change in future?
+  # --------- FEATURES & TARGETS ----------------------------------------------
+  # Add features (and their targets) to empty lists if they are evaluated
+  # in the specific scenario
   features_list <- list()
+  targets_list <- list()
   
-  features <- unlist(features)
-  
-  ## -------- Ecosystems ------------------------------------------
-  if ("ecosystems" %in% features) {
+  ## -------- Strategic Ecosystems --------------------------------
+  ## Add if either all strategic ecosystems or bosque seco are evaluated
+  if (strat_ecos_target != 0 | !is.na(bs_target)) {
     ## Read in matrix
-    ecosys_v <- readRDS(file.path(ipt_dir, "ecosistemas_marinos.rds"))
-    ecosys_v <- t(ecosys_v) %>% as("dgCMatrix") # transpose [rows == ecosystem, columns == cell]
-    ecosys_v <- ecosys_v[, ids] # only keep cells in PUs
+    strat_ecos_v <- readRDS(file.path(ipt_dir, "ecosistemas_estrategicos_EC.rds"))
+    strat_ecos_v <- t(strat_ecos_v) %>% as("dgCMatrix") # transpose [rows == ecosystem, columns == cell]
+    strat_ecos_v <- strat_ecos_v[, ids]
+    strat_ecos_v[is.na(strat_ecos_v)] <- 0  # fix NAs before converting
     
-    ## Read in df and filter to only ecosystems not meeting targets
-    cons_type <- ifelse("OMEC" %in% includes, "RUNAP_OMEC", "RUNAP") 
-    ecosys_df <- read_csv(file.path(ipt_dir, "marine_ecosys_filtered.csv"), show_col_types = FALSE) %>% 
-      filter(targets == target,
-             conservation_type == cons_type)
-    
-    ## Only add ecosystems that need to be evaluated to features list
-    row_idx <- which(rownames(ecosys_v) %in% ecosys_df$feature)
-    features_list[["ecosystems"]] <- ecosys_v[row_idx, ]
-    
-    ## Remove matrix to keep env memory low
-    rm(ecosys_v)
+    ## If bosque seco has distinct target, separate feature
+    if (!is.na(bs_target)) {
+      ## Pull bosque seco into own matrix, and remove from strategic ecosystems
+      bs_v <- strat_ecos_v[rownames(strat_ecos_v) == "bosque_seco", ]
+      strat_ecos_v <- strat_ecos_v[rownames(strat_ecos_v) != "bosque_seco", ]
+      
+      ## Add both to features and targets list
+      features_list[["strategic ecosystems"]] <- strat_ecos_v
+      features_list[["bosque seco"]] <- bs_v
+      
+      targets_list[["strategic ecosystems"]] <- rep(strat_ecos_target/100, nrow(strat_ecos_v))
+      targets_list[["bosque seco"]] <- (bs_target/100)
+      
+      rm(strat_ecos_v, bs_v)
+      
+    ## Otherwise, keep all three together and add to list
+    } else {
+      features_list[["strategic ecosystems"]] <- strat_ecos_v
+      targets_list[["strategic ecosystems"]] <- rep(strat_ecos_target/100, nrow(strat_ecos_v))
+      rm(strat_ecos_v)
+    }
   }
   
   
-  ## -------- Mangroves ------------------------------------------
-  # NOTE: this may expand to "strategic ecosystems" if more are added in future
-  if ("mangroves" %in% features) {
-    manglares_v <- readRDS(file.path(ipt_dir, "manglares.rds"))
-    manglares_v <- t(manglares_v) %>% as("dgCMatrix") # transpose [rows == ecosystem, columns == cell]
-    manglares_v <- manglares_v[, ids]
-    manglares_v[is.na(manglares_v)] <- 0  # fix NAs before converting
+  ## -------- Eje Cafetero Wetlands ----------------------------------
+  # Read in matrix and add to features list if evaluated
+  if (hum_target != 0) {
+    hum_v <- readRDS(file.path(ipt_dir, "humedales_EC.rds"))
+    hum_v <- t(hum_v) %>% as("dgCMatrix")
+    hum_v <- hum_v[, ids]
+    hum_v[is.na(hum_v)] <- 0
     
-    ## Add to features list
-    features_list[["Manglares"]] <- manglares_v
-    rm(manglares_v)
+    ## Add to features and targets list
+    features_list[["EC wetlands"]] <- hum_v
+    targets_list[["EC wetlands"]] <- (hum_target/100)
+    rm(hum_v)
   }
   
   
   ## -------- Combine Features ------------------------------------------
   ## Bind everything into one matrix
   features_mat <- do.call(rbind, features_list)
+  targets_df <- round(unlist(targets_list, use.names = FALSE), 4)
   
   ## Get number and names of features
   n_features <- as.numeric(features_mat@Dim[1])
   feature_names <- features_mat@Dimnames[[1]]
-  
-  ## Create list of targets for prioritizr model
-  targets_df <- rep((target/100), n_features)
   
   features_df <- data.frame(
     id = 1:n_features,
     name = feature_names,
     target = targets_df
   )
+  
   
   # --------- SET PROBLEM -------------------------------------------------
   ## Boundary penalties
@@ -150,7 +172,7 @@ marine_model <- function(target, includes, features, model_name,
     add_locked_in_constraints(locked_in) %>%
     add_binary_decisions() %>% 
     add_boundary_penalties(penalty = 0.001, data = boundaries) %>% 
-    add_gurobi_solver(gap = 0.05, threads = 15, verbose = FALSE)
+    add_gurobi_solver(gap = 0.01, threads = 10)
   
   ## If problem fails presolve check, note it and skip to next
   log_file <- file.path(opt_dir, "failed_scenarios.txt")
@@ -170,10 +192,13 @@ marine_model <- function(target, includes, features, model_name,
   if (is.null(s)) return (NULL)
   
   
+  ## ------- Summary statistics -------------------------------------
   ## Get coverage summary & save
   target_coverage <- eval_target_coverage_summary(p, s) %>%
-    mutate(scenario = model_name,           # Add the scenario info
-           evaluated = "prioritizr_model")  # These features explicitly evaluated in model
+    mutate(scenario = model_name,  # Add the scenario info
+           ## Translate number of PUs into area
+           total_amount_km2 = total_amount * cell_area_km2,
+           absolute_held_km2 = absolute_held * cell_area_km2)
   
   write_csv(target_coverage, file.path(opt_dir, paste0(model_name, "_summary.csv")))
   
@@ -184,59 +209,6 @@ marine_model <- function(target, includes, features, model_name,
               overwrite = TRUE)
   
   
-  # --------- POST-HOC EVALUATION ---------------------------------------------
-  # Because some ecosystems (that already met baseline target) 
-  # were not included, need to get their coverage stats at a national level as well
-  message("Running post-hoc evaluation for scenario: ", model_name)
-  
-  ## ------- Ecosystems ----------------------------------------
-  eco_coverage <- NULL
-  
-  if ("ecosystems" %in% features) {  # For now, ecosystems always included. But make it flexible in case
-    ecosys_mat <- readRDS(file.path(ipt_dir, "ecosistemas_marinos.rds"))[ids, ]
-    ecosys_totals <- colSums(ecosys_mat)
-    ecosys_names <- colnames(ecosys_mat)
-    
-    evaluated <- target_coverage$feature
-    unevaluated <- setdiff(ecosys_names, evaluated)
-    if (length(unevaluated) == 0) return(NULL)
-    
-    totals <- ecosys_totals[unevaluated]
-    in_soln <- colSums(ecosys_mat[s == 1, unevaluated, drop = FALSE])
-    abs_target <- totals * (target / 100)
-    rel_held <- in_soln / totals
-    
-    eco_coverage <- data.frame(
-      feature = unevaluated,
-      met = rel_held >= (target / 100),
-      total_amount = totals,
-      absolute_target = abs_target,
-      absolute_held = in_soln,
-      absolute_shortfall = pmax(0, abs_target - in_soln),
-      relative_target = target / 100,
-      relative_held = rel_held,
-      relative_shortfall = pmax(0, (target / 100) - rel_held),
-      scenario = model_name,
-      evaluated = "post-hoc"
-    )
-    
-    rm(ecosys_mat); gc()
-    
-  } # END ecosystem post-hoc
-  
-  
-  
-  ## ------- Combine and save -------------------------------------
-  ## Put all the post-hoc evaluations in one dataframe
-  post_hoc_coverage <- eco_coverage # ONLY ONE FOR NOW
-  rownames(post_hoc_coverage) <- NULL
-  
-  ## Combine with solution target coverages, then save
-  target_coverage_full <- rbind(target_coverage, post_hoc_coverage)
-  
-  write_csv(target_coverage_full, file.path(opt_dir, paste0(model_name, "_summary.csv")))
-  
-  
   ## Get overview stats and add to running list of solutions
   freq_tbl <- freq(s_rast)
   cost_summary <- eval_cost_summary(p, s) # Is this even meaningful?
@@ -245,8 +217,11 @@ marine_model <- function(target, includes, features, model_name,
     n_total = sum(freq_tbl$count),
     n_new_protection = get_freq(freq_tbl, "Priority area"),
     n_locked_in = get_freq(freq_tbl, "Locked in"),
+    area_total_km2 = sum(freq_tbl$count) * cell_area_km2,
+    area_new_protection_km2 = get_freq(freq_tbl, "Priority area") * cell_area_km2,
+    area_locked_in_km2 = get_freq(freq_tbl, "Locked in") * cell_area_km2,
     cost = cost_summary$cost,
-    pct_targets_met = mean(target_coverage_full$met, na.rm = TRUE) * 100
+    pct_targets_met = mean(target_coverage$met, na.rm = TRUE) * 100
   )
   
   # Append eval_summary row to master CSV
@@ -277,13 +252,13 @@ marine_model <- function(target, includes, features, model_name,
 
 
 # ========== RUN PRIORITIZATION ==============================================
-# ## If process stopped part-way, remove scenarios already completed or permanently failed
+## If process stopped part-way, remove scenarios already completed or permanently failed
 # completed_list <- file.path(opt_dir, "master_eval_summary.csv")
 # failed_list    <- file.path(opt_dir, "failed_scenarios.txt")
 # 
 # if (file.exists(completed_list)) {
 #   completed <- read_csv(completed_list)
-#   scenarios_mar_df <- scenarios_mar_df %>%
+#   scenarios_ec_df <- scenarios_ec_df %>%
 #     filter(!model_name %in% completed$scenario)
 #   rm(completed)
 # }
@@ -293,13 +268,31 @@ marine_model <- function(target, includes, features, model_name,
 #                        col.names = c("time", "model_name", "error"),
 #                        strip.white = TRUE)
 #   failed_list <- unique(failed$model_name)
-#   scenarios_mar_df <- scenarios_mar_df %>%
+#   scenarios_ec_df <- scenarios_ec_df %>%
 #     filter(!model_name %in% failed_list)
 #   rm(failed); rm(failed_list)
 # }
 
 ## Generate model over list of scenarios
-purrr::pmap(scenarios_mar_df, marine_model, force_s = TRUE)
+purrr::pmap(scenarios_ec_df, eje_model, skip_presolve = TRUE, force_s = TRUE)
 
 
+
+## quick code for combining all results
+cols_to_round <- c("total_amount_km2", "absolute_held_km2")
+
+csv_files <- list.files(opt_dir, pattern = "\\.csv$", full.names = T)
+csv_files <- csv_files[-41]
+master_df <- csv_files %>%
+  map_dfr(~ read_csv(.x, show_col_types = FALSE) %>%
+            mutate(across(all_of(cols_to_round), ~ round(.x, 4)))) %>% 
+  relocate(scenario, .before = everything()) %>% 
+  relocate(total_amount_km2, .before = absolute_target) %>% 
+  relocate(absolute_held_km2, .before = absolute_shortfall) %>% 
+  mutate(absolute_target_km2 = absolute_target * cell_area_km2, .before = absolute_held)
+
+# ---- Write out the master CSV ----
+write_csv(master_df, file.path(opt_dir, "resultados_todos.csv"))
+
+df <- read_csv(file.path(opt_dir, "master_eval_summary.csv"))
 

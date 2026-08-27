@@ -1,5 +1,5 @@
-## script: Prioritizr Colombia (matrix)
-## Purpose: Set parameters and run prioritization models for Colombia
+## script: National Terrestrial Model
+## Purpose: Set the parameters and run the terrestrial national prioritization models for Colombia
 
 # ========== SETTING UP =======================================================
 ## Load packages
@@ -21,11 +21,36 @@ for (dir in c(ipt_dir, opt_dir)){
 
 
 # ========== PRIORITZATION FUNCTION ============================================
-## Wrapping all the model building and running inside a function 
-## to easily run over a list of scenarios.
+# Wrapping all the model building and running inside a function to easily run over a list of scenarios.
+
+#' @param ecos_target Numeric. Target percentage (0-100) for ecosystem
+#'   representation; 0 to exclude ecosystems from this scenario. 
+#' @param strat_ecos_target Numeric. Target percentage (0-100) for strategic 
+#'   ecosystems; 0 to exclude.
+#' @param sp_rep_target Numeric. Target percentage (0-100) for species 
+#'   representativeness; 0 to exclude. Mutually exclusive with sp_rn_target.
+#' @param sp_rn_target Logical. If TRUE, evaluates species national 
+#'   responsibility targets (species-specific) instead of representativeness (17% or 30%).
+#' @param ecos_serv_target Numeric. Target percentage (0-100) for ecosystem 
+#'   services; 0 to exclude.
+#' @param includes Character vector. Which layers should be "locked-in" to the 
+#'   solution (e.g. "RUNAP", "OMEC", "comunidades", "resguardos").
+#' @param cost Character. Which cost data to use ("IHEH2022" or 
+#'   "IHEH2030"). Also determines available planning units.
+#' @param model_name Character. Unique identifier for this scenario, used 
+#'   for output file names and logging.
+#' @param skip_presolve Logical. If TRUE, skip the presolve check and 
+#'   attempt to solve regardless. Default FALSE.
+#' @param force_s Logical. If TRUE, force gurobi to return a solution even 
+#'   if the presolve/solve process raises non-fatal warnings. Passed to 
+#'   solve(p, force = force_s). Default FALSE.
+#'
+#' @return NULL (invisibly). Writes solution raster and summary CSVs to 
+#'   opt_dir for each solution. Also creates and appends log of failed scenarios.
 
 terrestrial_model <- function(ecos_target, strat_ecos_target, sp_rep_target, 
-                              sp_rn_target, ecos_serv_target, includes, cost, model_name) {
+                              sp_rn_target, ecos_serv_target, includes, cost, model_name,
+                              skip_presolve = FALSE, force_s = FALSE) { 
   ## Print scenario and time of start
   message("Running scenario: ", model_name, 
           "\nRun start: ", format(Sys.time(), "%H:%M:%S"))
@@ -250,9 +275,9 @@ terrestrial_model <- function(ecos_target, strat_ecos_target, sp_rep_target,
   log_file <- file.path(opt_dir, "failed_scenarios.txt")
   
   s <- tryCatch({
-    if (!presolve_check(p))
+    if (!skip_presolve && !presolve_check(p))
       stop(paste("Presolve check failed for scenario:", model_name))
-    solve(p)
+    solve(p, force = force_s)
   }, error = function(e) {
     message("Skipping ", model_name, ": ", e$message)
     write(paste(Sys.time(), model_name, e$message, sep = " | "), 
@@ -378,9 +403,9 @@ terrestrial_model <- function(ecos_target, strat_ecos_target, sp_rep_target,
         add_locked_in_constraints(locked_in_p2) %>%
         add_binary_decisions() %>% 
         add_boundary_penalties(penalty = 0.001, data = boundaries) %>% 
-        add_gurobi_solver(gap = 0.05, threads = 15, verbose = TRUE)
+        add_gurobi_solver(gap = 0.05, threads = 15, verbose = FALSE)
       
-      ## Solve
+      ## Always force this problem
       s2 <- solve(p2, force = TRUE)
       
       ## Get updated summary coverage & overwrite
@@ -595,31 +620,27 @@ terrestrial_model <- function(ecos_target, strat_ecos_target, sp_rep_target,
 
 
 # ========== RUN PRIORITIZATION ==============================================
-## If process stopped part-way, remove scenarios already completed or permanently failed
-completed_list <- file.path(opt_dir, "master_eval_summary.csv")
-failed_list    <- file.path(opt_dir, "failed_scenarios.txt")
+failed_file <- file.path(opt_dir, "failed_scenarios.txt")
 
-if (file.exists(completed_list)) {
-  completed <- read_csv(completed_list)
-  scenarios_terra_df <- scenarios_terra_df %>%
-    filter(!model_name %in% completed$scenario)
-  rm(completed)
+if (!file.exists(failed_file)) {
+  stop("failed_scenarios.txt was not found in results/national/terrestrial")
 }
 
-if (file.exists(failed_list)) {
-  failed <- read.table(failed_list, sep = "|",
-                       col.names = c("time", "model_name", "error"),
-                       strip.white = TRUE) %>%
-    ## remove memory errors for now
-    filter(error == "Error 10001: Out of memory")
-  failed_list <- unique(failed$model_name)
-  scenarios_terra_df <- scenarios_terra_df %>%
-    filter(!model_name %in% failed_list)
-  rm(failed); rm(failed_list)
+failed <- read.table(failed_file, sep = "|",
+                     col.names = c("time", "model_name", "error"),
+                     strip.white = TRUE) %>%
+  mutate(time = as.POSIXct(time))
+
+failed_models <- failed %>%
+  pull(model_name) %>%
+  unique()
+
+rerun_df <- scenarios_terra_df %>%
+  filter(model_name %in% failed_models)
+
+if (nrow(rerun_df) == 0) {
+  stop("No scenarios from failed_scenarios.txt matched the spreadsheet scenarios.")
 }
 
-## Generate model over list of scenarios
-purrr::pmap(scenarios_terra_df, terrestrial_model)
-
-
-
+## Force all failed scenarios immediately, without a presolve-gated first pass
+purrr::pmap(rerun_df, terrestrial_model, skip_presolve = TRUE, force_s = TRUE)

@@ -445,7 +445,7 @@ terrestrial_model <- function(ecos_target, strat_ecos_target, sp_rep_target,
   
   ## Only run if species was evaluate
   if (sp_rep_target != 0 | sp_rn_target == TRUE) {
-    taxon_names <- c("Aves", "Mammalia", "Crocodylia", 
+    taxon_names <- c("Aves", "Amphibia", "Mammalia", "Crocodylia", 
                      "Squamata", "Magnoliopsida_1", "Magnoliopsida_2")
     
     taxon_files <- list.files(ipt_dir, pattern = "\\.rds$", full.names = TRUE) %>% 
@@ -653,7 +653,7 @@ if (file.exists(failed_list)) {
 
 
 ## **NOTE: RERUNNING FOR AMPHIBIAN MODELS ONLY***
-rerun_scenarios <- read_csv("rerun_scenarios.csv")
+rerun_scenarios <- read_csv("rerun_scenarios.csv") 
 
 purrr::pmap(rerun_scenarios, terrestrial_model)
 

@@ -192,13 +192,22 @@ eje_model <- function(strat_ecos_target, bs_target, hum_target, includes, cost,
   if (is.null(s)) return (NULL)
   
   
-  ## ------- Summary statistics -------------------------------------
+    ## ------- Summary statistics -------------------------------------
   ## Get coverage summary & save
   target_coverage <- eval_target_coverage_summary(p, s) %>%
     mutate(scenario = model_name,  # Add the scenario info
+           ## Was explicitly included in the model
+           evaluated = "prioritizr_model",
            ## Translate number of PUs into area
            total_amount_km2 = total_amount * cell_area_km2,
-           absolute_held_km2 = absolute_held * cell_area_km2)
+           absolute_held_km2 = absolute_held * cell_area_km2,
+           feature_type = case_when(
+             feature %in% rownames(features_list[["strategic ecosystems"]]) ~ "strategic ecosystem",
+             feature %in% rownames(features_list[["bosque seco"]]) ~ "bosque seco",
+             feature %in% rownames(features_list[["EC wetlands"]]) ~ "EC wetlands",
+             TRUE ~ NA_character_
+           ),
+           class = NA_character_)
   
   write_csv(target_coverage, file.path(opt_dir, paste0(model_name, "_summary.csv")))
   
@@ -207,6 +216,91 @@ eje_model <- function(strat_ecos_target, bs_target, hum_target, includes, cost,
   writeRaster(s_rast,
               file.path(opt_dir, paste0(model_name, ".tif")),
               overwrite = TRUE)
+  
+  
+  # --------- POST-HOC EVALUATION (SPECIES & ECOSYSTEMS) -----------------------
+  # Species and ecosystems aren't explicit features in this model, so evaluate
+  # their coverage post-hoc against BOTH the 17% and 30% thresholds, using only
+  # cells within the Orinoquia region (ids). These are for providing statistics
+  # in the webtool.
+  message("Running post-hoc evaluation for scenario: ", model_name)
+  
+  ## ------- Ecosystems ----------------------------------------
+  ## NOTE: adjust filename to match your Orinoquia ecosystems matrix
+  ecosys_mat <- readRDS(file.path(ipt_dir, "ecosistemas_IAVH_2024_EC.rds"))[ids, ]
+  ecosys_totals  <- colSums(ecosys_mat)
+  ecosys_in_soln <- colSums(ecosys_mat[s == 1, , drop = FALSE])
+  rm(ecosys_mat); gc()
+  
+  eco_coverage <- tibble(
+    feature = names(ecosys_totals),
+    total_amount = ecosys_totals,
+    absolute_held = ecosys_in_soln
+  ) %>% 
+    # filter(total_amount > 0) %>%
+    mutate(
+      relative_held     = absolute_held / total_amount,
+      total_amount_km2  = total_amount * cell_area_km2,
+      absolute_held_km2 = absolute_held * cell_area_km2,
+      met               = NA,
+      relative_target   = NA_real_,
+      scenario     = model_name,
+      evaluated    = "post-hoc",
+      feature_type = "ecosystem",
+      class        = NA_character_
+    )
+  
+  ## ------- Species --------------------------------------------
+  taxon_names <- c("Aves", "Amphibia", "Mammalia", "Crocodylia",
+                   "Squamata", "Magnoliopsida_1", "Magnoliopsida_2")
+  
+  taxon_files <- list.files(ipt_dir, pattern = "_EC\\.rds$", full.names = TRUE) %>%
+    keep(~ tools::file_path_sans_ext(basename(.x)) %>%
+           str_remove("_EC$") %in% taxon_names)
+  
+  spp_coverage <- list()
+  
+  for (f in taxon_files) {
+    taxon_name <- tools::file_path_sans_ext(basename(f)) %>% str_remove("_EC$")
+    message("Processing species group: ", taxon_name)
+    
+    mat <- readRDS(f)[ids, ]
+    spp_totals  <- colSums(mat)
+    spp_in_soln <- colSums(mat[s == 1, , drop = FALSE])
+    rm(mat); gc()
+    
+    spp_coverage[[taxon_name]] <- tibble(
+      feature = names(spp_totals),
+      total_amount = spp_totals,
+      absolute_held = spp_in_soln
+    ) %>% 
+      # filter(total_amount > 0) %>%  # drop species not present in the region
+      mutate(
+        relative_held     = absolute_held / total_amount,
+        total_amount_km2  = total_amount * cell_area_km2,
+        absolute_held_km2 = absolute_held * cell_area_km2,
+        met               = NA,
+        relative_target   = NA_real_,
+        scenario     = model_name,
+        evaluated    = "post-hoc",
+        feature_type = "species",
+        class        = taxon_name
+      )
+  }
+  
+  post_hoc_coverage <- bind_rows(c(list(ecosystems = eco_coverage), spp_coverage))
+  
+  
+  ## ------- Combine with explicit target coverage and save ---------------
+  ## Using bind_rows (not rbind) since post-hoc rows carry met_17/met_30
+  ## instead of a single "met" column — mismatched columns fill as NA.
+  target_coverage_full <- bind_rows(target_coverage, post_hoc_coverage) %>%
+    mutate(class = case_when(
+      class %in% c("Magnoliopsida_1", "Magnoliopsida_2") ~ "Magnoliopsida",
+      .default = class
+    ))
+  
+  write_csv(target_coverage_full, file.path(opt_dir, paste0(model_name, "_summary.csv")))
   
   
   ## Get overview stats and add to running list of solutions

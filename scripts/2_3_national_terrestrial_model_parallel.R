@@ -13,8 +13,8 @@ source("scripts/utils.R")
 
 ## Set seed and directories
 set.seed(500)
-ipt_dir <- here("data/model_inputs")
-opt_dir <- here("results/national/terrestrial")
+ipt_dir <- here("data/model_inputs/national")
+opt_dir <- here("results/national/terrestrial/NEW")
 
 for (dir in c(ipt_dir, opt_dir)){
   if (!dir.exists(dir)) dir.create(dir, recursive = TRUE)  # Create directories if needed
@@ -84,11 +84,11 @@ terrestrial_model <- function(ecos_target, strat_ecos_target, sp_rep_target,
   }
   if ("comunidades" %in% includes) {
     ## Update to make any cell either condition as TRUE
-    locked_in <- locked_in | (readRDS(file.path(ipt_dir, "comunidades.rds"))[ids, ] == 1)
+    locked_in <- locked_in | (readRDS(file.path(ipt_dir, "comunidades_national.rds"))[ids, ] == 1)
   }
   if ("resguardos" %in% includes) {
     ## Update to make any cell either condition as TRUE
-    locked_in <- locked_in | (readRDS(file.path(ipt_dir, "resguardos.rds"))[ids, ] == 1)
+    locked_in <- locked_in | (readRDS(file.path(ipt_dir, "resguardos_national.rds"))[ids, ] == 1)
   }
   
 
@@ -103,7 +103,7 @@ terrestrial_model <- function(ecos_target, strat_ecos_target, sp_rep_target,
   ## All ecosystems
   if (ecos_target != 0) {
     ## Read in matrix
-    ecosys_v <- readRDS(file.path(ipt_dir, "ecosistemas_IAVH_2024.rds"))
+    ecosys_v <- readRDS(file.path(ipt_dir, "ecosistemas_IAVH_2024_terrestres.rds"))
     ecosys_v <- t(ecosys_v) %>% as("dgCMatrix") # transpose [rows == ecosystem, columns == cell]
     ecosys_v <- ecosys_v[, ids] # only keep cells in PUs
     
@@ -141,7 +141,7 @@ terrestrial_model <- function(ecos_target, strat_ecos_target, sp_rep_target,
   ## -------- Ecosystem Services ----------------------------------
   # Read in matrix and add to features list if evaluated
   if (ecos_serv_target != 0) {
-    ecos_serv_v <- readRDS(file.path(ipt_dir, "servicios_ecosistemicos.rds"))
+    ecos_serv_v <- readRDS(file.path(ipt_dir, "servicios_ecosistemicos_terrestres.rds"))
     ecos_serv_v <- t(ecos_serv_v) %>% as("dgCMatrix")
     ecos_serv_v <- ecos_serv_v[, ids]
     ecos_serv_v[is.na(ecos_serv_v)] <- 0
@@ -185,12 +185,12 @@ terrestrial_model <- function(ecos_target, strat_ecos_target, sp_rep_target,
       
     ## Species national responsibility
     } else if (sp_rn_target == TRUE) {
-      mat <- readRDS(file.path(ipt_dir, "biomod_filtered_responsibilidad_nacional.rds"))
+      mat <- readRDS(file.path(ipt_dir, "biomod_filtered_responsibilidad_national.rds"))
       species_rij <- mat %>% t() %>% as("dgCMatrix"); rm(mat)    # transpose [rows == spp, columns == cell]
       species_rij <- species_rij[, ids]
       
       ## Filter dataframe
-      species_df <- read_csv(file.path(ipt_dir, "biomod_spp_responsibilidad_nacional.csv"), show_col_types = FALSE) %>% 
+      species_df <- read_csv(file.path(ipt_dir, "biomod_spp_responsibilidad_national.csv"), show_col_types = FALSE) %>% 
         filter(target_met == FALSE,                    # hasn't met target yet
                conservation_type == species_cons_type) # match RUNAP/RUNAP+OMEC
       
@@ -313,11 +313,12 @@ terrestrial_model <- function(ecos_target, strat_ecos_target, sp_rep_target,
   if (sp_rep_target != 0) {
     
     ## Load each taxon class names (as matching matrices)
-    taxon_names <- c("Aves", "Mammalia", "Crocodylia", 
+    taxon_names <- c("Aves", "Amphibia", "Mammalia", "Crocodylia", 
                      "Squamata", "Magnoliopsida_1", "Magnoliopsida_2")
     
     taxon_files <- list.files(ipt_dir, pattern = "\\.rds$", full.names = TRUE) %>% 
-      keep(~ tools::file_path_sans_ext(basename(.x)) %in% taxon_names)
+      keep(~ tools::file_path_sans_ext(basename(.x)) %>% 
+             str_remove("_national$") %in% taxon_names)
     
     ## Will collect one matrix per class, rbind at the end
     unmet_spp_list <- list()
@@ -325,7 +326,7 @@ terrestrial_model <- function(ecos_target, strat_ecos_target, sp_rep_target,
     ## Loop through each taxonomic class:
     ## Determine if any species haven't met targets and then add to list.
     for (f in taxon_files) {
-      taxon_name <- tools::file_path_sans_ext(basename(f))
+      taxon_name <- tools::file_path_sans_ext(basename(f)) %>% str_remove("_national$")
       message("Double-checking: ", taxon_name)
       
       ## Read in taxonomic class matrix
@@ -443,15 +444,16 @@ terrestrial_model <- function(ecos_target, strat_ecos_target, sp_rep_target,
   
   ## Only run if species was evaluate
   if (sp_rep_target != 0 | sp_rn_target == TRUE) {
-    taxon_names <- c("Aves", "Mammalia", "Crocodylia", 
+    taxon_names <- c("Aves", "Amphibia", "Mammalia", "Crocodylia", 
                      "Squamata", "Magnoliopsida_1", "Magnoliopsida_2")
     
     taxon_files <- list.files(ipt_dir, pattern = "\\.rds$", full.names = TRUE) %>% 
-      keep(~ tools::file_path_sans_ext(basename(.x)) %in% taxon_names)
+      keep(~ tools::file_path_sans_ext(basename(.x)) %>% 
+             str_remove("_national$") %in% taxon_names)
     
     ## Loop through each group 
     for (f in taxon_files) {
-      taxon_name <- tools::file_path_sans_ext(basename(f))
+      taxon_name <- tools::file_path_sans_ext(basename(f)) %>% str_remove("_national$")
       message("Processing species group: ", taxon_name)
       
       ## Total range per species (denominator). Compute once per matrix
@@ -497,7 +499,7 @@ terrestrial_model <- function(ecos_target, strat_ecos_target, sp_rep_target,
         
         ## Get species-specific targets for national responsibility
         species_df <- 
-          read_csv(file.path(ipt_dir, "biomod_spp_responsibilidad_nacional.csv"), show_col_types = FALSE) %>% 
+          read_csv(file.path(ipt_dir, "biomod_spp_responsibilidad_national.csv"), show_col_types = FALSE) %>% 
           filter(conservation_type == species_cons_type,
                  scientific_name %in% unevaluated) %>% 
           select(scientific_name, responsibility) %>% 
@@ -530,7 +532,7 @@ terrestrial_model <- function(ecos_target, strat_ecos_target, sp_rep_target,
   eco_coverage <- NULL
   
   if (ecos_target != 0) {  # For now, ecosystems always included. But make it flexible in case
-    ecosys_mat <- readRDS(file.path(ipt_dir, "ecosistemas_IAVH_2024.rds"))[ids, ]
+    ecosys_mat <- readRDS(file.path(ipt_dir, "ecosistemas_IAVH_2024_terrestres.rds"))[ids, ]
     ecosys_totals <- colSums(ecosys_mat)
     ecosys_names <- colnames(ecosys_mat)
     
@@ -574,7 +576,7 @@ terrestrial_model <- function(ecos_target, strat_ecos_target, sp_rep_target,
   target_coverage_full <- rbind(target_coverage, post_hoc_coverage) %>% 
     ## Merge all plants back 
     mutate(class = case_when(
-      class %in% c("Magnoliospida_1", "Magnoliospida_2") ~ "Magnoliospida",
+      class %in% c("Magnoliopsida_1", "Magnoliopsida_2") ~ "Magnoliopsida",
       .default = class
     ))
   
@@ -648,26 +650,16 @@ update_master_summary <- function(results, opt_dir) {
 
 
 # ========== RUN PRIORITIZATION ==============================================
-failed_file <- file.path(opt_dir, "failed_scenarios.txt")
+## **NOTE: RERUNNING FOR AMPHIBIAN MODELS ONLY** -- mirrors the update made in
+## 2_1_national_terrestrial_model.R. We're no longer re-running everything
+## logged in failed_scenarios.txt; instead we rerun exactly the scenarios
+## listed in rerun_scenarios.csv (the ones where amphibians didn't reach
+## their target), now that "Amphibia" has been added to the species checks
+## above.
+rerun_scenarios <- read_csv("rerun_scenarios.csv")
 
-if (!file.exists(failed_file)) {
-  stop("failed_scenarios.txt was not found in results/national/terrestrial")
-}
-
-failed <- read.table(failed_file, sep = "|",
-                     col.names = c("time", "model_name", "error"),
-                     strip.white = TRUE) %>%
-  mutate(time = as.POSIXct(time))
-
-failed_models <- failed %>%
-  pull(model_name) %>%
-  unique()
-
-rerun_df <- scenarios_terra_df %>%
-  filter(model_name %in% failed_models)
-
-if (nrow(rerun_df) == 0) {
-  stop("No scenarios from failed_scenarios.txt matched the spreadsheet scenarios.")
+if (nrow(rerun_scenarios) == 0) {
+  stop("rerun_scenarios.csv was found but contained no rows.")
 }
 
 ## ---- Parallel setup ----------------------------------------------------
@@ -689,29 +681,34 @@ n_workers <- 3
 cl <- makeCluster(n_workers, type = "FORK")
 ## FORK (Linux/macOS only) forks the current R session, so every worker
 ## already has prioritizr/gurobi/Matrix loaded and already has template_terra,
-## scenarios_terra_df, ipt_dir, opt_dir, and terrestrial_model() in scope --
+## rerun_scenarios, ipt_dir, opt_dir, and terrestrial_model() in scope --
 ## no clusterExport needed. On Windows, FORK isn't available; use
 ## type = "PSOCK" instead and add, before the parLapplyLB() call below:
 ##   clusterEvalQ(cl, {library(prioritizr); library(gurobi); library(Matrix)
 ##                      library(dplyr); library(readr); library(here)})
-##   clusterExport(cl, c("template_terra", "scenarios_terra_df", "ipt_dir",
+##   clusterExport(cl, c("template_terra", "rerun_scenarios", "ipt_dir",
 ##                        "opt_dir", "terrestrial_model", "presolve_check",
 ##                        "rasterize_soln", "get_freq"))
 ##   # plus any other object/function from utils.R that terrestrial_model() uses
 
-## Force all failed scenarios immediately, without a presolve-gated first pass.
-## Each row of rerun_df is one task. parLapplyLB (load-balanced) hands a
-## worker its next scenario as soon as it finishes its current one, which
+## NOTE: unlike the old failed_scenarios.txt rerun, these scenarios are not
+## being forced past a presolve failure -- they're being re-evaluated because
+## Amphibia was added to the species checks inside terrestrial_model(), so
+## skip_presolve/force_s are left at their defaults (FALSE), same as the
+## purrr::pmap(rerun_scenarios, terrestrial_model) call in
+## 2_1_national_terrestrial_model.R.
+##
+## Each row of rerun_scenarios is one task. parLapplyLB (load-balanced) hands
+## a worker its next scenario as soon as it finishes its current one, which
 ## matters here since scenarios with sp_rep_target != 0 can trigger a second
 ## solve internally and run noticeably longer than others -- a plain
 ## parLapply would pre-split tasks evenly up front and could leave a worker
 ## idle while another is still stuck on a slow scenario.
-scenario_args <- split(rerun_df, seq_len(nrow(rerun_df)))
+scenario_args <- split(rerun_scenarios, seq_len(nrow(rerun_scenarios)))
 
 results <- parLapplyLB(cl, scenario_args, function(row) {
   tryCatch(
-    do.call(terrestrial_model,
-            c(as.list(row), list(skip_presolve = TRUE, force_s = TRUE))),
+    do.call(terrestrial_model, as.list(row)),
     error = function(e) {
       ## terrestrial_model() already catches errors from presolve_check()/
       ## solve() internally and logs them to failed_scenarios.txt. This is
@@ -724,6 +721,68 @@ results <- parLapplyLB(cl, scenario_args, function(row) {
 })
 
 stopCluster(cl)
+
+## ---- Force any of THESE scenarios that failed the presolve check --------
+## The first pass above uses the default skip_presolve/force_s = FALSE, so
+## anything that fails presolve_check() gets logged to failed_scenarios.txt
+## and skipped rather than solved. This second pass rereads that log,
+## filters to only scenarios that are actually part of rerun_scenarios (so
+## it doesn't pick up stale failures logged by some earlier, unrelated run),
+## keeps just the ones that failed presolve specifically (not some other
+## error), and reruns exactly those with skip_presolve = TRUE, force_s = TRUE.
+##
+## Reminder: forcing bypasses the presolve gate, it doesn't fix whatever made
+## the problem infeasible in the first place -- Gurobi may return an
+## infeasible or low-quality solution for a forced scenario. Worth spot-
+## checking the *_summary.csv for anything that gets force-solved here.
+failed_file <- file.path(opt_dir, "failed_scenarios.txt")
+
+if (file.exists(failed_file)) {
+  failed <- read.table(failed_file, sep = "|",
+                       col.names = c("time", "model_name", "error"),
+                       strip.white = TRUE) %>%
+    mutate(time = as.POSIXct(time))
+
+  ## Only the latest failure entry per scenario (e.g. maybe it failed
+  ## presolve once, then a different error the next time it was tried).
+  presolve_fails <- failed %>%
+    filter(model_name %in% rerun_scenarios$model_name) %>%
+    arrange(model_name, time) %>%
+    group_by(model_name) %>%
+    slice_tail(n = 1) %>%
+    ungroup() %>%
+    filter(grepl("^Presolve check failed", error)) %>%
+    pull(model_name) %>%
+    unique()
+
+  force_df <- rerun_scenarios %>%
+    filter(model_name %in% presolve_fails)
+
+  if (nrow(force_df) > 0) {
+    message("Forcing ", nrow(force_df), " scenario(s) that failed presolve: ",
+            paste(force_df$model_name, collapse = ", "))
+
+    cl2 <- makeCluster(n_workers, type = "FORK")
+
+    force_args <- split(force_df, seq_len(nrow(force_df)))
+
+    force_results <- parLapplyLB(cl2, force_args, function(row) {
+      tryCatch(
+        do.call(terrestrial_model,
+                c(as.list(row), list(skip_presolve = TRUE, force_s = TRUE))),
+        error = function(e) {
+          message("Uncaught error in ", row$model_name, ": ", e$message)
+          NULL
+        }
+      )
+    })
+
+    stopCluster(cl2)
+
+    ## Combine with the first pass's results so both end up in the master file
+    results <- c(results, force_results)
+  }
+}
 
 ## Combine every returned summary row into master_eval_summary.csv, once,
 ## serially, here in the main session (see the note on update_master_summary()

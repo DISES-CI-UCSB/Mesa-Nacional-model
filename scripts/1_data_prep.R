@@ -10,6 +10,7 @@ source("scripts/utils.R")
 if (!require("pacman")) install.packages("pacman")
 pacman::p_load(       # automatically installs packages if needed
   svMisc,             # progress bar for looping
+  exactextractr,      # used for more accurate area extractions
   Matrix)             # Matrices
 
 
@@ -782,7 +783,7 @@ saveRDS(cong_v, file.path(ipt_dir, "sirap/orinoquia", "congriales.rds"))
 # biomodelos_exploration.qmd
 
 ## Path to locally stored BioModelos data
-biomod_fp <- "C:/Users/nmcmanus/OneDrive - Conservation International Foundation/Documents/Projects/DISES/biomodelos/BioModelos_Data/NatGeo_NGS-86896T-21"
+biomod_fp <- file.path(features, "biomodelos/NatGeo_NGS-86896T-21")
 
 ## Get list of species
 spp_df <- read_csv(file.path(biomod_fp, "listas_spp_natgeo_sib_2023.csv")) %>% 
@@ -1472,7 +1473,59 @@ ley2_v <- read_sf(file.path(viz_path, "reservas_forestales/reservas.shp")) %>%
 writeVector(ley2_v, file.path(geo_dir, "national", "reservas_forestales_ley2da.shp"))
 
 
-### -------------- AICAS y KBAs ----------------
+## ------------------ Land Cover --------------------
+# Using Colombia produced IDEAM CLC data from 2022.
+# Data available as vector from: https://experience.arcgis.com/experience/568ddab184334f6b81a04d2fe9aac262/page/Datos-Abiertos-Geogr%C3%A1ficos-/
+
+## Files stored in geopackage
+ideam_sf <- st_read(
+  dsn = file.path(
+    viz_path,
+    "IDEAM_CLC_2022",
+    "raw/Cobertura_tierra_100K_periodo_2022_limite_administrativo",
+    "ECOSISTEMAS_18062025/ECOSISTEMAS_18062025.gpkg"),
+  layer = "e_cobertura_tierra_2022_amb"
+)
+
+
+## rasterize data to specified classification level
+ideam_rasterize <- function(level, region) {
+  ## Match template and output directory to geographic region
+  cfg <- switch(region,
+                national = list(template = template_terra, dir = "national"),
+                EC = list(template = template_ec, dir = "sirap/eje_cafetero"),
+                orinoquia = list(template = template_ori, dir = "sirap/orinoquia"),
+                stop("Unknown geographic region: ", region))
+  
+  template <- cfg$template
+  dir <- cfg$dir
+  
+  ## only keep to specified level
+  ideam_sf$codigo <- as.numeric(substr(ideam_sf$codigo, 1, level))
+  
+  ## rasterize to match template
+  ideam_r <- vect(ideam_sf) %>% 
+    project(., my_crs) %>% 
+    rasterize(., template, field = "codigo") %>% 
+    mask(., template)
+  
+  ## export
+  writeRaster(ideam_r, 
+              file.path(geo_dir, dir, sprintf('ideam_clc_2022_level%s_%s.tif', level, region)), 
+              overwrite = TRUE)
+}
+
+## Run for just levels 1 and 2 for now
+df <- expand.grid(
+  level = c(1, 2),
+  region = c("national", "EC", "orinoquia"),
+  stringsAsFactors = FALSE
+)
+
+purrr::pmap(.l = df, .f = ideam_rasterize, .progress = TRUE); rm(df)
+
+
+## -------------- AICAS y KBAs ----------------
 # Still waiting on access to data!
 
 

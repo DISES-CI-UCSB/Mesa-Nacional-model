@@ -10,6 +10,7 @@ if (!require("pacman")) install.packages("pacman")
 pacman::p_load(       # automatically installs packages if needed
   tidyverse,          # always
   here,               # easier file paths
+  janitor,            # cleans dataframe variables
   readxl,             # read .xls format
   terra,              # GIS 
   sf,                 # vector functions

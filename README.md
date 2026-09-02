@@ -1,4 +1,4 @@
-**English** \| [Español](README.es.md)
+**English** | [Español](README.es.md)
 
 # Conservation Prioritization Models
 
@@ -9,7 +9,7 @@ This repository contains scripts for preparing spatial data and running systemat
 **Regions currently evaluated:**
 
 | Region | Realm | Scale | Resolution | Script |
-|---------------|---------------|---------------|---------------|---------------|
+|----|----|----|----|----|
 | Colombia (national) | Terrestrial | National | 1 km | `2_1_national_terrestrial_model.R` |
 | Colombia (national) | Marine | National | 1 km | `2_2_national_marine_model.R` |
 | SIRAP Eje Cafetero | Terrestrial | Regional | 300 m | `3_1_sirap_eje_cafetero_model.R` |
@@ -41,7 +41,7 @@ All scripts assume the working directory is the **repository root** (calling `so
 Input data are **not included in this repository** due to file size. All datasets must be downloaded/requested separately and placed in the expected local directory structure (below) before running `1_data_prep.R`.
 
 | Dataset | Used for | Source / notes |
-|------------------------|------------------------|------------------------|
+|----|----|----|
 | IHEH (Índice de Huella Humana) 2022 & projected 2030 | Cost layer (terrestrial and SIRAPs) | [Produced by Humboldt Institute](https://geonetwork.humboldt.org.co/geonetwork/srv/spa/catalog.search#/metadata/7d8f0aeb-8136-45a7-a469-f0016f618250) (IAVH, 2024. contrato de prestación de servicios No. 23-22/187-23/0017-197PS. Instituto Humboldt. Bogotá, D. C., Colombia.) |
 | IHEH 2030 | Cost layer (terrestrial and SIRAPs) | [Produced by Humboldt Institute](https://reporte.humboldt.org.co/biodiversidad/2019/cap2/203/#seccion10); data provided directly by report authors. |
 | Marine human footprint | Cost layer (marine) | Prepared by INVEMAR and reviewed by the Mesa Nacional. This layer combines pressures from factors contributing to biodiversity loss across the Colombian Caribbean and Pacific marine and coastal zones, using 2019–2020 baseline data at 300 m resolution. It considers nine variables: 1) coastal habitat transformation, 2) human access to the coastal zone, 3) human occupation, 4) nighttime light, 5) marine pollution, 6) industrial fishing, 7) artisanal fishing, 8) marine traffic, and 9) port activity. |
@@ -140,7 +140,7 @@ Each model script:
 Written to `results/<region>/` (auto-created), one folder per region:
 
 | File | Contents |
-|------------------------------------|------------------------------------|
+|----|----|
 | `<model_name>.tif` | Rasterized solution for that scenario: selected new priority cells vs. existing locked-in (already-protected) cells. Cells not part of the solution are NA. |
 | `<model_name>_summary.csv` | Per-scenario target coverage detail, listing each feature as a row (including individual species and ecosystems, where applicable) with details on how much is held in the solution. |
 | `master_eval_summary.csv` | One row per scenario across the whole region: total/new/locked-in cell counts, cost, % of targets met. Appended to (not overwritten) as scenarios complete, which is what makes reruns resumable. |
@@ -151,7 +151,7 @@ Written to `results/<region>/` (auto-created), one folder per region:
 
 ## Notes / caveats
 
--   Gurobi run time scales with the number of scenarios and planning units; national-scale runs will take considerably longer than the SIRAP regions. Some national terrestrial scenarios evaluate all \~8,000 species targets and can require **over 64 GB of RAM** — running the national scripts on a virtual machine with higher memory/processing power is recommended rather than a typical laptop. `failed_scenarios.txt` will document which scenarios failed due to memory limitations.
+-   Gurobi run time scales with the number of scenarios and planning units; national-scale runs will take considerably longer than the SIRAP regions. Some national terrestrial scenarios evaluate all ~8,000 species targets and can require **over 64 GB of RAM** — running the national scripts on a virtual machine with higher memory/processing power is recommended rather than a typical laptop. `failed_scenarios.txt` will document which scenarios failed due to memory limitations.
 -   Several data layers (Orinoquía sabanas and congriales, Eje Cafetero wetlands, marine ecosystems and human footprint) were shared directly by partners and are not from a public portal — flagged in [Data](#data) where that's the case.
 -   The BioModelos species section currently only runs for the **national terrestrial** model; SIRAP models do not yet include species as a feature, but a post-hoc evaluation for these scripts still evaluates species-level coverage in the solutions and appends to their `<model_name>_summary.csv`.
 

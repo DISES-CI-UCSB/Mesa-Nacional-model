@@ -1,10 +1,11 @@
 ## script: utils
-## Purpose: Functions and dataframes created for use in other scripts that can be loade
+## Purpose: Generates necessary directories, functions, and data used for other scripts. 
+## Also loads and installs most of the required packages.
 
 
 # ========== PACKAGES & DIRECTORIES ==========================================
 ## Load/install required libraries
-if (!require("pacman")) install.packages("pacman")
+if (!require("pacman")) install.packages("pacman") # Installs pacman package if needed
 
 ## Load required packages
 pacman::p_load(       # automatically installs packages if needed
@@ -12,53 +13,59 @@ pacman::p_load(       # automatically installs packages if needed
   here,               # easier file paths
   janitor,            # cleans dataframe variables
   readxl,             # read .xls format
-  terra,              # GIS 
-  sf,                 # vector functions
-  purrr)              # faster lapply
+  terra,              # GIS functions
+  sf,                 # vector functions (plays nicer with tidyverse)
+  purrr)              # faster lapply-type functions
+
 
 ## Create local directories
-temp_dir <- here("data/temp_outputs")     # Store intermediate/temporary outputs
-geo_dir <- here("data/model_input_lyrs")  # GeoTIFs of input layers used
-ipt_dir <- here("data/model_inputs")      # Inputs directly used in prioritizr model
+temp_dir <- here("data/temp_outputs")     # Store intermediate/temporary outputs from data preparation
+geo_dir <- here("data/model_input_lyrs")  # GeoTIFs and shapefiles of input layers used in models
+ipt_dir <- here("data/model_inputs")      # Inputs directly used in prioritizr model (typically matrices)
 
 base_dirs <- c(temp_dir, geo_dir, ipt_dir)
 
-## Sub-directories based on model level/region
+## Sub-directories based on model level and region
 sub_dirs  <- c("national", 
                "sirap/eje_cafetero",
                "sirap/orinoquia") 
 
+## Combine base and sub-directories
 all_dirs <- c(
   base_dirs,
   as.vector(outer(base_dirs, sub_dirs, file.path))
 )
 
-## Creates all directories (if needed)
+## Create all directories locally (if needed)
 for (dir in all_dirs){
   if (!dir.exists(dir)) dir.create(dir, recursive = TRUE)
 }
 
-## Remove unneeded variables
+## Remove unneeded variables from environment
 rm(dir, base_dirs, all_dirs)
 
 
 # ========== TEMPLATES ==============================================
-## Use the MAGNA-SIRGAS/CTM-12 as it's official projection for Colombia
+# This section creates the template rasters for each region, which are used to prepare all other model inputs.
+# If you'd like to change a particular model's resolution or extent, this is where to do so!
+
+## Use MAGNA-SIRGAS/CTM-12 for all regions as it's official projection for Colombia
 my_crs <- "EPSG:9377"
 
+
 ## ------ Terrestrial -------------------------------------------
-# Use Humboldt-produced raster as base for terrestrial Colombian extent. 
+# Use Humboldt-produced IHEH raster as base for terrestrial Colombian extent. 
 # This is how planning units will be defined for the terrestrial model runs.
 
-## Data in a geodatabase, so first find the correct layer (IHEH 2022)
+## Raw data in a geodatabase, so first find the correct layer (IHEH 2022)
 # info <- describe("data/costs/HEH_2022.gdb")
 # print(info)
 
-
-## If the template hasn't yet been created, then it will be. 
-## Otherwise, save time and read in the existing template
+## Where to save/read the template
 template_path <- file.path(geo_dir, "national", "template_terrestre.tif")
 
+## If the template hasn't yet been created, then the following section will make it. 
+## Otherwise, save time and by skipping and reading in the existing template. 
 if (!file.exists(template_path)) {
   ## Open raster from geodatabase
   iheh_r <- rast('OpenFileGDB:"data/costs/HEH_2022.gdb":IHEH') %>% 
@@ -66,28 +73,28 @@ if (!file.exists(template_path)) {
     project(., my_crs, method = "bilinear") %>%
     ## Second, aggregate to get cells closer to desired resolution (1km)
     aggregate(
-      fact = floor(1000 / res(.)[1]), #factor must be integer, so round down
+      fact = floor(1000 / res(.)[1]), # factor must be integer, so round down
       fun = "mean", 
       na.rm = TRUE
     ) %>% 
     ## Finally, make sure it's exactly 1km resolution
     project(., my_crs, method = "bilinear", res = 1000) %>% 
-    setNames("IHEH_2022")
+    setNames("IHEH_2022") # specify raster name in file metadata
   
   ## Save raster as one of the model costs (IHEH2022)
   writeRaster(iheh_r, 
               file.path(geo_dir, "national", "IHEH_2022.tif"), 
               overwrite = TRUE)
   
-  ## Save terrestrial template as binary version
+  ## Save the terrestrial template as binary version of cost layer
   template_terra <- iheh_r
   template_terra[!is.na(template_terra)] <- 1
   names(template_terra) <- "template_terrestre"
-  writeRaster(template_terra, 
-              template_path, 
-              overwrite = TRUE)
+  
+  writeRaster(template_terra, template_path, overwrite = TRUE)
   
 } else {
+  # Reads in file if already created before
   template_terra <- rast(template_path)
 }
 
@@ -98,8 +105,8 @@ outline <- as.polygons(mask); rm(mask)
 
 
 ## ------ Marine -----------------------------------
-# Use marine ecosystems, mangroves, and marine human footprint
-# to generate a template raster (that makes sure all PUs have a cost).
+# Use marine ecosystems, mangroves, and marine human footprint to generate the 
+# template raster; this makes sure all planning units have a cost.
 # Same as terrestrial, this template will define the PUs for marine model.
 
 template_path <- file.path(geo_dir, "national", "template_marino.tif")
@@ -114,15 +121,15 @@ if (!file.exists(template_path)) {
                     "Union_Profundo_Somero/Union_Profundo_Somero.shp")) %>% 
     st_transform(my_crs) 
   
-  ## Get "code list" of marine biomes, then update shapefile with attribute
-  ## As directed, using the "consolidated" attribute
+  ## Get "code list" of marine biomes, then update shapefile with attribute.
+  ## As directed, using the "consolidad" attribute
   mar_df <- data.frame(
     biome = unique(mar_sf$Consolidad)) %>%  
     mutate(biome_id = seq_len(nrow(.)))
   
   mar_sf <- left_join(mar_sf, mar_df, join_by("Consolidad" == "biome"))
   
-  ## Create initial marine template
+  ## Create initial (empty) marine template
   mar_r <- rast(
     ext(mar_sf),
     resolution = 1000,
@@ -214,9 +221,7 @@ if (!file.exists(template_path)) {
   template_mar <- mask(template_mar, hm_r)
   
   ## Save final marine template
-  writeRaster(template_mar,
-              template_path,
-              overwrite = TRUE)
+  writeRaster(template_mar, template_path, overwrite = TRUE)
   
   
   ## Remove all the extra variables from environment
@@ -224,15 +229,16 @@ if (!file.exists(template_path)) {
      mar_df, mar_r, mar_sf, ecosys_mar_r, manglares_r, hm_r)
   
 } else {
+  # If the template has already been made, then simply read it in
   template_mar <- rast(template_path)
 }
 
 rm(template_path)
 
-## ------ Combined template -----------------------------------
-# # The combined template is empty (no values), since it is not used to define
-# # planning units for the model. It is currently only used for data spanning
-# # both marine and terrestrial (e.g. RUNAP and OMECs)
+
+
+# # NOTE: This section below is not currently used, but could be adapted in the future
+# # if a combined marine + terrestrial model is desired. 
 # 
 # ## Get the combined extent from marine and terrestrial templates
 # combined_ext <- ext(
@@ -253,7 +259,7 @@ rm(template_path)
 
 
 ## -------- SIRAPs ---------------------------------------------------
-# Make templates (serivng as planning units) for regional SIRAP models.
+# Make templates (serving as planning units) for regional SIRAP models.
 # Each may differ in resolution. 
 
 ### ------- Eje Cafetero ---------------
@@ -261,13 +267,13 @@ rm(template_path)
 
 template_path <- file.path(geo_dir, "sirap/eje_cafetero", "template_eje_cafetero.tif")
 
-## If template hasn't yet been created, run
+## If template hasn't yet been created, run following code
 if (!file.exists(template_path)) {
-  ## First get boundary of region
+  ## First get the boundary of region from the provided SIRAP shapefile data
   ec_v <- read_sf(file.path("data/sirap_actualizado/Territoriales_y_SIRAPs.shp")) %>%
     filter(Tematico == "Eje Cafetero") %>%  # Only keep EC
     st_union() %>%                          # Dissolve municipal boundaries
-    vect() %>%                              # terra obj to match rasters
+    vect() %>%                              # transform to a terra object to match the rasters
     project(., my_crs)                      # match projection
     
   ## Save this if needed
@@ -289,13 +295,12 @@ if (!file.exists(template_path)) {
               file.path(geo_dir, "sirap/eje_cafetero", "IHEH_EC_2022.tif"), 
               overwrite = TRUE)
   
-  ## Save template as binary version
+  ## Save template as the binary version of the cost raster
   template_ec <- iheh_r
   template_ec[!is.na(template_ec)] <- 1
   names(template_ec) <- "template_eje_cafetero"
-  writeRaster(template_ec, 
-              template_path, 
-              overwrite = TRUE)
+  
+  writeRaster(template_ec, template_path, overwrite = TRUE)
   
 } else {
   template_ec <- rast(template_path)
@@ -307,6 +312,7 @@ if (!file.exists(template_path)) {
 
 template_path <- file.path(geo_dir, "sirap/orinoquia", "template_orinoquia.tif")
 
+## Only create template if needed
 if (!file.exists(template_path)) {
   ## First get boundary of region
   ori_v <- read_sf(file.path("data/sirap_actualizado/Territoriales_y_SIRAPs.shp")) %>% 
@@ -334,13 +340,12 @@ if (!file.exists(template_path)) {
               file.path(geo_dir, "sirap/orinoquia", "IHEH_orinoquia_2022.tif"), 
               overwrite = TRUE)
   
-  ## Save template as binary version
+  ## Save template as binary version of cost raster
   template_ori <- iheh_r
   template_ori[!is.na(template_ori)] <- 1
   names(template_ori) <- "template_orinoquia"
-  writeRaster(template_ori, 
-              template_path, 
-              overwrite = TRUE)
+  
+  writeRaster(template_ori, template_path, overwrite = TRUE)
   
 } else {
   template_ori <- rast(template_path)
@@ -351,9 +356,22 @@ rm(template_path)
 
 
 # ========== FUNCTIONS ==============================================
-## Create fxn to rasterize solution (outputs as matrix)
+# This section creates some functions that are utilized multiple times 
+# in other scripts. Feel free to update to continue streamlining scripts. 
+
+
+## Function to rasterize the prioritizr solution
+#' @param s This is the prioritizr solution output (as a matrix) 
+#' @param template The region's template raster will be used to convert  
+#'   matrix outputs into a GeoTIFF.
+#' @param locked_in Matrix of all the areas "locked in" to the solution (e.g. RUNAP y/o OMECs).
+#'   They are given a different value in raster to easily differentiate.
+#' @param ids Numeric list of which cells in the raster are part of the solution.
+#'
+#' @return rast. Creates a raster of the solution.
+
 rasterize_soln <- function(s, template, locked_in, ids) {
-  ## Create output raster from template (either marine or terrestrial)
+  ## Create empty raster from region's template (terrestrial, marine, or SIRAP)
   rast <- template
   rast[] <- NA
   
@@ -376,19 +394,32 @@ rasterize_soln <- function(s, template, locked_in, ids) {
 }
 
 
-## Get cell counts from rasterized outputs
+
+## Quick function that gets cell counts from rasterized solution outputs
 get_freq <- function(freq_df, val) {
   x <- subset(freq_df, as.character(value) == val)$count
   if (length(x) == 0) 0 else x
 }
 
 
+
 ## Get summary coverage stats for ecosystems
-ecosys_coverage <- function(ecosys_m,            # ecosystem matrix
-                            targets = c(17, 30), # list of targets (defaults to 17% and 30%)
-                            ids,                 # list of cells that are PUs
-                            ecosys_type          # terrestrial or marine (string)
-                            ) { 
+#' @param ecosys_m binary matrix of ecosystem values, where each column is a
+#'   unique ecosystem category and each row is a cell. Values of 1 indicate a presence.
+#' @param targets Numeric list of model target coverages. Defaults to 17% and 30%.
+#' @param ecosys_type String. Either "terrestrial" or "marine", used to 
+#'   differentiate process and naming conventions.
+#' @param ids Numeric list of which cells in the raster are part of the solution.
+#'
+#' @return A tidy data frame with one row per feature/target/conservation-type
+#'   combination that has not yet met its target. Columns: `feature` (ecosystem
+#'   name), `total_cells` (cell count for that feature), `pct_runap` and
+#'   `pct_runap_omec` (percent coverage under each conservation scenario),
+#'   `targets` (target coverage being evaluated), and `conservation_type`
+#'   ("RUNAP" or "RUNAP_OMEC"). Also writes summary and filtered CSVs to disk
+#'   as a side effect.
+
+ecosys_coverage <- function(ecosys_m, targets = c(17, 30), ids, ecosys_type) {
   ## Only eval cells in PUs
   ecosys_m <- ecosys_m[ids, ]
   ecosys_m[is.na(ecosys_m)] <- 0
@@ -408,7 +439,6 @@ ecosys_coverage <- function(ecosys_m,            # ecosystem matrix
     omec <- readRDS(file.path(ipt_dir, "national", "omec_marinos.rds"))[ids, ] == 1
     omec[is.na(omec)] <- FALSE
   }
-
   
   ## Define locked in areas for both conservation scenarios
   locked_runap <- runap
@@ -470,18 +500,20 @@ ecosys_coverage <- function(ecosys_m,            # ecosystem matrix
 
 
 # ========== MODEL SCENARIOS =================================================
-# Create a dataframe with parameters for each model scenario
+# This section creates a dataframe of scenarios for each model, 
+# where each column is a modeling parameter and each row is a different scenario.
+# These are used to iteratively run the prioritizr models!
 
 
 ## ------ Terrestrial -----------------------------------
-# NOTE: For now, just using excel sheet provided by Mesa national.
-# Once confirmed, may re-introduce code to more flexibly generate dataframe.
+# NOTE: For now, just using excel sheet provided by Mesa Nacional de Prioridades.
 
 scenarios_terra_df <- 
-  ## Read in excel file from Mesa national
+  ## Read in excel file from Mesa Nacional
   read_excel(file.path(ipt_dir, "national", "corridas_05062026.xlsx"), 
              sheet = "Hoja1", skip = 1, .name_repair = "unique_quiet") %>% 
   janitor::clean_names() %>% 
+  ## Specify parameter names  to call in modeling function
   rename(
     ecos_target = umbral_3,
     strat_ecos_target = umbral_5,
@@ -491,6 +523,7 @@ scenarios_terra_df <-
     includes = figuras_de_manejo, 
     cost = costo
   ) %>% 
+  ## Combine locked-in parameter as a list within one cell
   mutate(
     includes = map(includes, ~ if (.x == "RUNAP y OMEC") c("RUNAP", "OMEC") else c("RUNAP"))
     ) %>% 
@@ -499,24 +532,27 @@ scenarios_terra_df <-
   ## Species national responsibility targets are variable, 
   ## so correct to make these targets binary (evaluate or not)
   mutate(sp_rn_target = sp_rn_target > 0) %>% 
-  ## Remove unnecessary scenarios
+  ## Remove unnecessary duplicated scenarios
   distinct()
 
+## Abbreviated naming convention
 feature_abbr <- c(
-  ecos_target = "Eco",
-  strat_ecos_target = "Estr",
-  ecos_serv_target = "Serv",
-  sp_rep_target = "EspRep"
+  ecos_target = "Eco",         # Ecosistemas
+  strat_ecos_target = "Estr",  # Ecosistemas estratégicos
+  ecos_serv_target = "Serv",   # Ecosistemas servicios
+  sp_rep_target = "EspRep"     # Especies (representividad)
 )
 
+## Function to build out model name (and file name) to reflect scenario parameters
 build_model_name <- function(ecos_target, strat_ecos_target, sp_rep_target,
                              sp_rn_target, ecos_serv_target, includes, cost) {
+  ## Only include a component in the name if it was considered in the specific scenario
   parts <- c(
     if (ecos_target != 0) paste0(feature_abbr["ecos_target"], ecos_target),
     if (strat_ecos_target != 0) paste0(feature_abbr["strat_ecos_target"], strat_ecos_target),
     if (ecos_serv_target != 0) paste0(feature_abbr["ecos_serv_target"], ecos_serv_target),
     if (sp_rep_target != 0) paste0(feature_abbr["sp_rep_target"], sp_rep_target),
-    if (isTRUE(sp_rn_target)) "EspRN"
+    if (isTRUE(sp_rn_target)) "EspRN" # Especies (responsibilidad nacional)
   )
   feature_str <- paste(parts, collapse = "+")
   
@@ -526,10 +562,10 @@ build_model_name <- function(ecos_target, strat_ecos_target, sp_rep_target,
   } else {
     "RUNAP"
   }
-  
   paste0(feature_str, "+", includes_str, "_", cost)
 }
 
+## Update dataframe with the model names
 scenarios_terra_df <- scenarios_terra_df %>%
   mutate(
     model_name = pmap_chr(
@@ -541,21 +577,29 @@ scenarios_terra_df <- scenarios_terra_df %>%
 
 
 ## ------ Marine -----------------------------------
+# No spreadsheet provided, so manually build out dataframe for modeling scenarios
+# matching format of other geographic regions. 
+
+## Abbreviations for modeling parameters
 feature_abbr <- c(
-  "ecosystems" = "Ecos",
-  "mangroves"  = "Mang")
+  "ecosystems" = "Ecos",  # Ecosistemas
+  "mangroves"  = "Mang")  # Manglares
 
 include_abbr <- c(
   "RUNAP" = "RUNAP",
   "OMEC"  = "OMEC")
 
+# NOTE: only one cost for now, so not currently needed
 # cost_abbr <- c(
-#   "huella_marina" = "HHM") #only one cost for now
+#   "huella_marina" = "HHM")
 
+## Build out the dataframe
 scenarios_mar_df <- expand.grid(
+  ## Targets currently either 30% or 50% coverage
   target = c(30, 50),
   includes = list(c("RUNAP"), c("RUNAP", "OMEC"))
   ) %>%
+  ## Ecosystems and mangroves both always considered, with matching targets
   mutate(
     features = list(c("ecosystems", "mangroves")),
     model_name = paste0(
@@ -576,6 +620,7 @@ scenarios_ec_df <-
   read_excel(file.path(ipt_dir, "sirap/eje_cafetero", "corridas_SIRAP_EC_16072026.xlsx"),
              .name_repair = "unique_quiet") %>% 
   janitor::clean_names() %>% 
+  ## Rename variables to reflect parameters
   rename(
     strat_ecos_target = umbral_3,
     bs_target = umbral_5,
@@ -592,14 +637,16 @@ scenarios_ec_df <-
   ## Remove duplicate scenarios
   distinct()
 
-
+## Abbreviated naming convention
 feature_abbr <- c(
-  strat_ecos_target = "Estr",
-  bs_target = "Bs",
-  hum_target = "HuEC"
+  strat_ecos_target = "Estr", # Ecosistemas estratégicos
+  bs_target = "Bs",           # Bosque seco
+  hum_target = "HuEC"         # Humedales (de Eje Cafetero)
 )
 
+## Function to build out the model name for each scenario
 build_model_name <- function(strat_ecos_target, bs_target, hum_target, includes, cost) {
+  ## Only include components in name if considered
   parts <- c(
     if (strat_ecos_target != 0) paste0(feature_abbr["strat_ecos_target"], strat_ecos_target),
     if (!is.na(bs_target)) paste0(feature_abbr["bs_target"], bs_target),
@@ -617,6 +664,7 @@ build_model_name <- function(strat_ecos_target, bs_target, hum_target, includes,
   paste0(feature_str, "+", includes_str, "_", cost)
 }
 
+## Update dataframe with model names
 scenarios_ec_df <- scenarios_ec_df %>%
   mutate(
     model_name = pmap_chr(
@@ -649,12 +697,14 @@ scenarios_ori_df <-
   relocate(sab_target, .before = includes)
 
 
+## Abbreviated naming convention
 feature_abbr <- c(
-  strat_ecos_target = "Estr",
-  cong_target = "Cong",
-  sab_target = "Sab"
+  strat_ecos_target = "Estr",  # Ecosistemas estratégicos
+  cong_target = "Cong",        # Congriales
+  sab_target = "Sab"           # Sabanas
 )
 
+## Create model (scenario) names
 build_model_name <- function(strat_ecos_target, cong_target, sab_target, includes, cost) {
   parts <- c(
     if (strat_ecos_target != 0) paste0(feature_abbr["strat_ecos_target"], strat_ecos_target),
@@ -673,6 +723,7 @@ build_model_name <- function(strat_ecos_target, cong_target, sab_target, include
   paste0(feature_str, "+", includes_str, "_", cost)
 }
 
+## Update dataframe with names
 scenarios_ori_df <- scenarios_ori_df %>%
   mutate(
     model_name = pmap_chr(

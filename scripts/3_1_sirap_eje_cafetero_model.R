@@ -17,9 +17,10 @@ set.seed(500)
 ipt_dir <- here("data/model_inputs/sirap/eje_cafetero")
 opt_dir <- here("results/sirap/eje_cafetero")
 
+## Creates directories if needed
 if (!dir.exists(opt_dir)) dir.create(opt_dir, recursive = TRUE)
 
-## Use specific template for model
+## Use specific Eje Cafetero template for this prioritizr model
 template <- template_ec
 
 ## Get cell area in km2
@@ -58,6 +59,7 @@ eje_model <- function(strat_ecos_target, bs_target, hum_target, includes, cost,
           "\nRun start: ", format(Sys.time(), "%H:%M:%S"))
   
   # --------- PLANNING UNITS ------------------------------------------
+  ## Planning unit values depend on cost layer used
   if (cost == "IHEH2022") {
     pus <- readRDS(file.path(ipt_dir, "IHEH_EC_2022.rds"))
   } else if (cost == "IHEH2030") {
@@ -101,7 +103,7 @@ eje_model <- function(strat_ecos_target, bs_target, hum_target, includes, cost,
     strat_ecos_v <- strat_ecos_v[, ids]
     strat_ecos_v[is.na(strat_ecos_v)] <- 0  # fix NAs before converting
     
-    ## If bosque seco has distinct target, separate feature
+    ## If bosque seco has a distinct target, separate the feature from strategic ecosystems
     if (!is.na(bs_target)) {
       ## Pull bosque seco into own matrix, and remove from strategic ecosystems
       bs_v <- strat_ecos_v[rownames(strat_ecos_v) == "bosque_seco", ]
@@ -162,7 +164,7 @@ eje_model <- function(strat_ecos_target, bs_target, hum_target, includes, cost,
   boundaries <- boundaries/max(boundaries) #scaling issue
   
   
-  ## Build problem 
+  ## Build prioritizr problem 
   p <- problem(
     x = pus,
     features = features_df,
@@ -172,6 +174,7 @@ eje_model <- function(strat_ecos_target, bs_target, hum_target, includes, cost,
     add_locked_in_constraints(locked_in) %>%
     add_binary_decisions() %>% 
     add_boundary_penalties(penalty = 0.001, data = boundaries) %>% 
+    ## Can adjust settings here if needed
     add_gurobi_solver(gap = 0.01, threads = 10)
   
   ## If problem fails presolve check, note it and skip to next
@@ -192,7 +195,7 @@ eje_model <- function(strat_ecos_target, bs_target, hum_target, includes, cost,
   if (is.null(s)) return (NULL)
   
   
-    ## ------- Summary statistics -------------------------------------
+  ## ------- Summary statistics -------------------------------------
   ## Get coverage summary & save
   target_coverage <- eval_target_coverage_summary(p, s) %>%
     mutate(scenario = model_name,  # Add the scenario info
@@ -221,7 +224,7 @@ eje_model <- function(strat_ecos_target, bs_target, hum_target, includes, cost,
   # --------- POST-HOC EVALUATION (SPECIES & ECOSYSTEMS) -----------------------
   # Species and ecosystems aren't explicit features in this model, so evaluate
   # their coverage post-hoc against BOTH the 17% and 30% thresholds, using only
-  # cells within the Orinoquia region (ids). These are for providing statistics
+  # cells within Eje Cafetero region (`ids`). These are for providing statistics
   # in the webtool.
   message("Running post-hoc evaluation for scenario: ", model_name)
   
@@ -347,46 +350,31 @@ eje_model <- function(strat_ecos_target, bs_target, hum_target, includes, cost,
 
 # ========== RUN PRIORITIZATION ==============================================
 ## If process stopped part-way, remove scenarios already completed or permanently failed
-# completed_list <- file.path(opt_dir, "master_eval_summary.csv")
-# failed_list    <- file.path(opt_dir, "failed_scenarios.txt")
-# 
-# if (file.exists(completed_list)) {
-#   completed <- read_csv(completed_list)
-#   scenarios_ec_df <- scenarios_ec_df %>%
-#     filter(!model_name %in% completed$scenario)
-#   rm(completed)
-# }
-# 
-# if (file.exists(failed_list)) {
-#   failed <- read.table(failed_list, sep = "|",
-#                        col.names = c("time", "model_name", "error"),
-#                        strip.white = TRUE)
-#   failed_list <- unique(failed$model_name)
-#   scenarios_ec_df <- scenarios_ec_df %>%
-#     filter(!model_name %in% failed_list)
-#   rm(failed); rm(failed_list)
-# }
+completed_list <- file.path(opt_dir, "master_eval_summary.csv")
+failed_list    <- file.path(opt_dir, "failed_scenarios.txt")
+
+if (file.exists(completed_list)) {
+  completed <- read_csv(completed_list)
+  scenarios_ec_df <- scenarios_ec_df %>%
+    filter(!model_name %in% completed$scenario)
+  rm(completed)
+}
+
+if (file.exists(failed_list)) {
+  failed <- read.table(failed_list, sep = "|",
+                       col.names = c("time", "model_name", "error"),
+                       strip.white = TRUE)
+  failed_list <- unique(failed$model_name)
+  scenarios_ec_df <- scenarios_ec_df %>%
+    filter(!model_name %in% failed_list)
+  rm(failed); rm(failed_list)
+}
 
 ## Generate model over list of scenarios
-purrr::pmap(scenarios_ec_df, eje_model, skip_presolve = TRUE, force_s = TRUE)
+purrr::pmap(scenarios_ec_df, eje_model,
+            ## At last check, most solutions fail presolve (due to being overly simplistic).
+            ## So forcing at first pass. 
+            skip_presolve = TRUE, force_s = TRUE)
 
 
-
-## quick code for combining all results
-cols_to_round <- c("total_amount_km2", "absolute_held_km2")
-
-csv_files <- list.files(opt_dir, pattern = "\\.csv$", full.names = T)
-csv_files <- csv_files[-41]
-master_df <- csv_files %>%
-  map_dfr(~ read_csv(.x, show_col_types = FALSE) %>%
-            mutate(across(all_of(cols_to_round), ~ round(.x, 4)))) %>% 
-  relocate(scenario, .before = everything()) %>% 
-  relocate(total_amount_km2, .before = absolute_target) %>% 
-  relocate(absolute_held_km2, .before = absolute_shortfall) %>% 
-  mutate(absolute_target_km2 = absolute_target * cell_area_km2, .before = absolute_held)
-
-# ---- Write out the master CSV ----
-write_csv(master_df, file.path(opt_dir, "resultados_todos.csv"))
-
-df <- read_csv(file.path(opt_dir, "master_eval_summary.csv"))
 

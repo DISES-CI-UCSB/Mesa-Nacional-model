@@ -153,9 +153,9 @@ Written to `results/<region>/` (auto-created), one folder per region:
 -   Gurobi run time scales with the number of scenarios and planning units; national-scale runs will take considerably longer than the SIRAP regions. Some national terrestrial scenarios evaluate all ~8,000 species targets and can require **over 64 GB of RAM** — running the national scripts on a virtual machine with higher memory/processing power is recommended rather than a typical laptop. `failed_scenarios.txt` will document which scenarios failed due to memory limitations.
 -   Several data layers (Orinoquía sabanas and congriales, Eje Cafetero wetlands, marine ecosystems and human footprint) were shared directly by partners and are not from a public portal — flagged in [Data](#data) where that's the case.
 -   The BioModelos species section currently only runs for the **national terrestrial** model; SIRAP models do not yet include species as a feature, but a post-hoc evaluation for these scripts still evaluates species-level coverage in the solutions and appends to their `<model_name>_summary.csv`.
+-   These data, code, and associated webtool were handed over to the Mesa Nacional de Prioridades de Conservación in September 2026. Updates to code and methodology after this date may not be reflected in this repository
 
 <!-- TODO: add anything else worth flagging — e.g. known data gaps, assumptions in target-setting, who to contact for access to the shared/internal datasets -->
 
 ## Citation / contact
-
-<!-- TODO: write this out crediting folks. -->
+The methods for this analysis was developed by members of the Mesa Nacional de Prioridades de Conservación, and implemented by members of the DISES ECOPLAN team. Questions regarding the creation of this code can be directed to Nickolas McManus ([nmcmanus@conservation.org](mailto:nmcmanus@conservation.org)). Requests or questions regarding updates to these methods or code (after September 2026) can be directed to the Mesa Nacional ([prioridades.conservacion@parquesnacionales.gov.co](mailto:prioridades.conservacion@parquesnacionales.gov.co))

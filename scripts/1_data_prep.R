@@ -739,7 +739,7 @@ eco_mar_filtered <- ecosys_coverage(ecosys_mar_mat,
 sabana_r <- vect(
   file.path(
     features,
-    "Sabanas SIRAP Orinoquia",
+    "Sabanas_Orinoquia",
     "Sabanas_20241118_PAISAJES_SIRAPO_v3.shp"
   )) %>% 
   ## For now, treat all attributes as the same
@@ -783,7 +783,7 @@ saveRDS(cong_v, file.path(ipt_dir, "sirap/orinoquia", "congriales.rds"))
 # biomodelos_exploration.qmd
 
 ## Path to locally stored BioModelos data
-biomod_fp <- file.path(features, "biomodelos/NatGeo_NGS-86896T-21")
+biomod_fp <- file.path(features, "Especies/biomodelos")
 
 ## Get list of species
 spp_df <- read_csv(file.path(biomod_fp, "listas_spp_natgeo_sib_2023.csv")) %>% 
@@ -885,7 +885,7 @@ write_csv(spp_ranges_df, file.path(temp_dir, "national", "biomod_spp_ranges.csv"
 spp_ranges_df <- read_csv(file.path(temp_dir, "national", "biomod_spp_ranges.csv"))
 
 ## Read in RedList data and match BioModelos df
-iucn_df <- read_csv(here("data/redlist_species_data_20260424/assessments.csv")) %>% 
+iucn_df <- read_csv(file.path(features, "Especies/redlist_species_data_20260424/assessments.csv")) %>% 
   janitor::clean_names() %>% 
   select(scientific_name, redlist_category) %>% 
   ## only keep spp matching biomodelos

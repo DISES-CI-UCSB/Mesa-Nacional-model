@@ -79,10 +79,9 @@ Aunque no forma parte del repositorio, los scripts asumen esta organización rel
 data/
 ├── costs/                        # Rásteres IHEH (2022 y 2030), huella humana marina/
 ├── includes/                     # Shapefiles de RUNAP, OMEC, comunidades y resguardos indígenas
-├── features/                     # Ecosistemas, páramos, bosque seco, humedales, manglares, carbono, recarga de agua, capas específicas de Orinoquía
+├── features/                     # Ecosistemas, ecosistemas estrageticas, datos de los especies, carbono, recarga de agua, capas específicas de Orinoquía
 ├── sirap_actualizado/            # Shapefiles de límites de SIRAP/territoriales (usados para construir las plantillas de unidades de planificación de SIRAP)
 ├── visualization/                # Capas usadas solo para visualización: ECC, ZRC, RAMSAR, reservas de biosfera, reservas forestales, IDEAM CLC
-├── redlist_species_data_.../     # Descarga masiva de la Lista Roja de la UICN (assessments.csv)
 ├── temp_outputs/                 # Resultados intermedios escritos por los scripts (se crea automáticamente)
 │   ├── national/
 │   └── sirap/{eje_cafetero,orinoquia}/

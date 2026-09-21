@@ -79,10 +79,9 @@ While not part of the repo, the scripts assume this layout relative to the proje
 data/
 ├── costs/                        # IHEH rasters (2022 & 2030), marine human footprint/
 ├── includes/                     # RUNAP, OMEC, community & indigenous reserve shapefiles
-├── features/                     # Ecosystems, páramos, bosque seco, humedales, mangroves, carbon, freshwater recharge, Orinoquía-specific layers
+├── features/                     # Ecosystems, strategic ecosystems, species data, carbon, freshwater recharge, Orinoquía-specific layers
 ├── sirap_actualizado/            # SIRAP/territorial boundary shapefiles (used to build SIRAP planning-unit templates)
 ├── visualization/                # Layers used only for display: ECC, ZRC, RAMSAR, biosphere reserves, reservas forestales, IDEAM CLC
-├── redlist_species_data_.../     # IUCN Red List bulk download (assessments.csv)
 ├── temp_outputs/                 # Intermediate outputs written by scripts (auto-created)
 │   ├── national/
 │   └── sirap/{eje_cafetero,orinoquia}/

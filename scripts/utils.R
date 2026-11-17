@@ -12,6 +12,7 @@ pacman::p_load(       # automatically installs packages if needed
   tidyverse,          # always
   here,               # easier file paths
   janitor,            # cleans dataframe variables
+  stringi,            # cleaning names
   readxl,             # read .xls format
   terra,              # GIS functions
   sf,                 # vector functions (plays nicer with tidyverse)
@@ -118,7 +119,7 @@ if (!file.exists(template_path)) {
   ## Read in shapefile
   mar_sf <- read_sf(
     dsn = file.path("data/features", 
-                    "Union_Profundo_Somero/Union_Profundo_Somero.shp")) %>% 
+                    "Union_Profundo_Somero_V3/Union_Profundo_Somero_V3.shp")) %>% 
     st_transform(my_crs) 
   
   ## Get "code list" of marine biomes, then update shapefile with attribute.
@@ -147,7 +148,7 @@ if (!file.exists(template_path)) {
   ## Some small ecosystems are lost during rasterization process. 
   ## If we want to force these to be included (even if one pixel), can identify and include below. 
   present <- unique(na.omit(values(ecosys_mar_r)))
-  missing_ids <- setdiff(mar_df$biome_id, present) # 4 biomes get lost
+  missing_ids <- setdiff(mar_df$biome_id, present) # 40 biomes get lost
   
   ## Fix raster to include additional pixels of missing biomes (if needed)
   if (length(missing_ids) > 0) {
@@ -175,6 +176,8 @@ if (!file.exists(template_path)) {
     still_missing <- setdiff(mar_df$biome_id, final_ids)
     
     message("Now missing ", length(still_missing), " biomes(s).")
+    ## NOTE: still missing Litorales rocosos en Gorgona (biome id 123)
+    ## due to incomplete border around polygon (island)
   }
   
   ## Update marine template to include these additional pixels
@@ -402,6 +405,13 @@ get_freq <- function(freq_df, val) {
 }
 
 
+## Quick function to remove accents to better match across sources
+clean <- function(x) {
+  x <- as.character(x)
+  x <- stri_trans_general(x, "Latin-ASCII")  # é -> e, ñ -> n, ü -> u
+  tolower(trimws(gsub("\\s+", " ", x)))
+}
+
 
 ## Get summary coverage stats for ecosystems
 #' @param ecosys_m binary matrix of ecosystem values, where each column is a
@@ -578,40 +588,53 @@ scenarios_terra_df <- scenarios_terra_df %>%
 
 ## ------ Marine -----------------------------------
 # No spreadsheet provided, so manually build out dataframe for modeling scenarios
-# matching format of other geographic regions. 
+# matching format of other geographic regions.
 
 ## Abbreviations for modeling parameters
 feature_abbr <- c(
-  "ecosystems" = "Ecos",  # Ecosistemas
-  "mangroves"  = "Mang")  # Manglares
+  ecos_target = "Eco",         # Ecosistemas
+  strat_ecos_target = "Estr"   # Ecosistemas estratégicos
+)
 
 include_abbr <- c(
   "RUNAP" = "RUNAP",
   "OMEC"  = "OMEC")
 
-# NOTE: only one cost for now, so not currently needed
-# cost_abbr <- c(
-#   "huella_marina" = "HHM")
 
 ## Build out the dataframe
 scenarios_mar_df <- expand.grid(
-  ## Targets currently either 30% or 50% coverage
-  target = c(30, 50),
-  includes = list(c("RUNAP"), c("RUNAP", "OMEC"))
-  ) %>%
-  ## Ecosystems and mangroves both always considered, with matching targets
-  mutate(
-    features = list(c("ecosystems", "mangroves")),
-    model_name = paste0(
-      map_chr(target, ~ paste(paste0(feature_abbr, .x), collapse = "+")),
-      "+",
-      map_chr(includes, ~ paste(include_abbr[.x], collapse = "+")),
-      "_",
-      "HHM" #cost layer
-    )
-  )
+  ## Targets currently either 30% or 50% coverage (some ecosystems will have unique targets)
+  ecos_target = c(30, 50),
+  strat_ecos_target = c(30, 50),  #Currently only mangroves (may include corals and seagrasses later)
+  includes = list(c("RUNAP"), c("RUNAP", "OMEC")),
+  cost = "HHM" #Same cost layer for all scenarios (for)
+)
 
-rm(include_abbr)
+## Function to build out model name (and file name) to reflect scenario parameters
+build_model_name <- function(ecos_target, strat_ecos_target, includes, cost) {
+  ## Only include a component in the name if it was considered in the specific scenario
+  parts <- c(
+    if (ecos_target != 0) paste0(feature_abbr["ecos_target"], ecos_target),
+    if (strat_ecos_target != 0) paste0(feature_abbr["strat_ecos_target"], strat_ecos_target)
+  )
+  feature_str <- paste(parts, collapse = "+")
+  
+  includes_names <- unlist(includes)
+  includes_str <- if ("OMEC" %in% includes_names) {
+    "RUNAP+OMEC"
+  } else {
+    "RUNAP"
+  }
+  paste0(feature_str, "+", includes_str, "_", cost)
+}
+
+## Update dataframe with the model names
+scenarios_mar_df <- scenarios_mar_df %>%
+  mutate(model_name = pmap_chr(
+    list(ecos_target, strat_ecos_target, includes, cost),
+    build_model_name
+  ))
+
 
 
 ## ------ Eje Cafetero -----------------------------------

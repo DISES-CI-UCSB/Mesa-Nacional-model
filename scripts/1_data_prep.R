@@ -149,7 +149,7 @@ saveRDS(iheh_2030_v, file.path(ipt_dir, "sirap/orinoquia", "IHEH_orinoquia_2030.
 runap_vect <- vect(file.path(includes, "RUNAP/runap.shp")) %>% 
   project(., crs(my_crs))
 
-writeVector(runap_vect, file.path(geo_dir, "national", "runap.shp"))
+writeVector(runap_vect, file.path(geo_dir, "national", "runap.shp"), overwrite = TRUE)
 
 
 ## Second, read read in WDPA OMEC data, filter for Colombia, and join them together
@@ -675,14 +675,19 @@ purrr::walk(.x = c("terrestres", "EC", "orinoquia"),
 
 
 ###----------------------------- Marine ---------------------------------------
+#### 1. Create sparse matrix ------------
 # The shapefile is already rasterized and saved in `utils.R`
-# So just read that in and create sparse matrix. 
+# So first just read that in and create sparse matrix. 
 
 ## Get raster
 ecosys_mar_r <- rast(file.path(geo_dir, "national", "ecosistemas_marinos.tif"))
 
 ## Read in dataframe of biome ids
-ecosys_mar_df <- read_csv(file.path(geo_dir, "national", "ecosistemas_IDs_marinos.csv"))
+ecosys_mar_df <- read_csv(file.path(geo_dir, "national", "ecosistemas_IDs_marinos.csv")) %>% 
+  mutate(biome = clean(biome))
+
+## Save with cleaned names
+write_csv(ecosys_mar_df, file.path(geo_dir, "national", "ecosistemas_IDs_marinos.csv"))
 
 ## Convert raster in to df of values
 vals <- as.data.frame(ecosys_mar_r, cells = TRUE, na.rm = TRUE)
@@ -703,31 +708,49 @@ ecosys_mar_mat <- sparseMatrix(
 saveRDS(ecosys_mar_mat, file.path(ipt_dir, "national", "ecosistemas_marinos.rds"))
 
 
+#### 2. Ecosystem-specific targets -------------------
+## Read in spreadsheet provided by INVEMAR
+mar_target_df <- 
+  read_excel(file.path(ipt_dir, "national", "Umbrales Profundo somero_V2.xlsx"),
+             .name_repair = "unique_quiet") %>% 
+  janitor::clean_names() %>% 
+  ## Rename some variables for clarity
+  rename(biome = definicion) %>% 
+  ## Clean biome names to match more easily
+  mutate(biome = clean(biome)) %>% 
+  ## Join to the dataframe with biome IDs
+  full_join(., ecosys_mar_df, by = "biome") %>%
+  ## Keep needed variables
+  select(c(biome:biome_id))
+
+
 ## How many ecosystems already are meeting targets under RUNAP and OMEC?
 ecosys_mar_mat <- readRDS(file.path(ipt_dir, "national", "ecosistemas_marinos.rds"))
 ids <- cells(template_mar)  # which cells are PUs for marine model?
 
-## Run function to determine which marine ecosystems have already met goals.
-## Automatically saves tidy df in input_dir, but can store as object here to visualize
+## Run function to determine which marine ecosystems have already met goals for 30 and 50 scenarios
 eco_mar_filtered <- ecosys_coverage(ecosys_mar_mat, 
                                     targets = c(30, 50), 
                                     ids, "marine")
 
+## Now, how many of the ecosystems with lower targets are meeting those?
+eco_mar_filtered <- left_join(eco_mar_filtered, mar_target_df, join_by("feature" == "biome")) %>% 
+  ## Which ones have met their goal?
+  mutate(
+    runap_target_met = case_when(
+      (targets == 30 & umbral_del_30_percent != 30 & pct_runap >= umbral_del_30_percent) ~ TRUE, 
+      .default = FALSE),
+    runap_omec_target_met = case_when(
+      (targets == 50 & umbral_del_50_percent != 50 & pct_runap_omec >= umbral_del_50_percent) ~ TRUE, 
+      .default = FALSE)
+  ) %>% 
+  ## Filter out ecosystems that HAVE NOT met their targets
+  filter(runap_target_met == FALSE,
+         runap_omec_target_met == FALSE)
 
-## Read in intermediate fxn product to visualize ecosystems size if useful
-# ecosys_summary <- read_csv(file.path(temp_dir, "national", "marine_ecosystem_coverage.csv"))
-# 
-# ggplot(ecosys_summary, aes (x = total_cells)) +
-#   geom_histogram(bins = 30, color = "black", fill = "steelblue") +
-#   theme_minimal() +
-#   stat_bin(
-#     bins = 30,
-#     geom = "text",
-#     aes(label = after_stat(count)),
-#     vjust = -0.5
-#   )+
-#   labs(x = "Ecosystem Area (km2)",
-#        y = "Number of Ecosystems")
+## Save this as updated target dataframe
+write_csv(eco_mar_filtered, file.path(ipt_dir, "national", "marine_ecosys_filtered.csv"))
+
 
 
 
